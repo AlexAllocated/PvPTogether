@@ -27,32 +27,26 @@ local PREVIEW_STYLE_LAYOUTS = {
 	[STYLE_MODERN] = {
 		nameInsideHealthBar = true,
 		healthBarHeight = 18,
-		nameColorBySelection = false,
 	},
 	[STYLE_THIN] = {
 		nameInsideHealthBar = false,
 		healthBarHeight = 8,
-		nameColorBySelection = false,
 	},
 	[STYLE_BLOCK] = {
 		nameInsideHealthBar = true,
 		healthBarHeight = 18,
-		nameColorBySelection = false,
 	},
 	[STYLE_HEALTH_FOCUS] = {
 		nameInsideHealthBar = false,
 		healthBarHeight = 18,
-		nameColorBySelection = false,
 	},
 	[STYLE_CAST_FOCUS] = {
 		nameInsideHealthBar = false,
 		healthBarHeight = 8,
-		nameColorBySelection = false,
 	},
 	[STYLE_LEGACY] = {
 		nameInsideHealthBar = false,
 		healthBarHeight = 8,
-		nameColorBySelection = true,
 	},
 }
 
@@ -80,16 +74,14 @@ local PREVIEW_FALLBACK_CLASS_COLORS = {
 local previewClassColorPool = nil
 
 local function GetLocalizedClassName(classToken, fallback)
-	if type(classToken) ~= "string" or classToken == "" then
+	if type(classToken) ~= "string" or not PvPTogether:CanAccessValue(classToken) or classToken == "" then
 		return fallback
 	end
 
 	local localizedClassName = nil
-	if type(LOCALIZED_CLASS_NAMES_MALE) == "table" then
-		localizedClassName = LOCALIZED_CLASS_NAMES_MALE[classToken]
-	end
-	if (not localizedClassName or localizedClassName == "") and type(LOCALIZED_CLASS_NAMES_FEMALE) == "table" then
-		localizedClassName = LOCALIZED_CLASS_NAMES_FEMALE[classToken]
+	localizedClassName = PvPTogether:SafeGetField(LOCALIZED_CLASS_NAMES_MALE, classToken)
+	if type(localizedClassName) ~= "string" or localizedClassName == "" then
+		localizedClassName = PvPTogether:SafeGetField(LOCALIZED_CLASS_NAMES_FEMALE, classToken)
 	end
 	if type(localizedClassName) == "string" and localizedClassName ~= "" then
 		return localizedClassName
@@ -114,12 +106,12 @@ local function BuildPreviewClassColorPool()
 			r = r,
 			g = g,
 			b = b,
-			className = (type(className) == "string" and className ~= "") and className or "Player",
+			className = PvPTogether:SafeToString(className, "Player"),
 		}
 	end
 
 	local function AddClassColorByToken(classToken)
-		if type(classToken) ~= "string" or classToken == "" then
+		if type(classToken) ~= "string" or not PvPTogether:CanAccessValue(classToken) or classToken == "" then
 			return
 		end
 
@@ -128,21 +120,27 @@ local function BuildPreviewClassColorPool()
 			return
 		end
 
-		local classColor = nil
-		if type(RAID_CLASS_COLORS) == "table" then
-			classColor = RAID_CLASS_COLORS[classToken]
-		end
-		if type(classColor) == "table" then
-			AddColor(classColor.r, classColor.g, classColor.b, className)
+		local classColor = PvPTogether:SafeGetField(RAID_CLASS_COLORS, classToken)
+		if PvPTogether:CanAccessTable(classColor) then
+			AddColor(
+				PvPTogether:SafeGetField(classColor, "r"),
+				PvPTogether:SafeGetField(classColor, "g"),
+				PvPTogether:SafeGetField(classColor, "b"),
+				className
+			)
 			return
 		end
 
 		if C_ClassColor and type(C_ClassColor.GetClassColor) == "function" then
-			classColor = C_ClassColor.GetClassColor(classToken)
-			if type(classColor) == "table" then
-				local red, green, blue = classColor.r, classColor.g, classColor.b
-				if type(classColor.GetRGB) == "function" then
-					local okColor, r, g, b = pcall(classColor.GetRGB, classColor)
+			local ok, color = pcall(C_ClassColor.GetClassColor, classToken)
+			classColor = ok and color or nil
+			if PvPTogether:CanAccessTable(classColor) then
+				local red = PvPTogether:SafeGetField(classColor, "r")
+				local green = PvPTogether:SafeGetField(classColor, "g")
+				local blue = PvPTogether:SafeGetField(classColor, "b")
+				local getRGB = PvPTogether:SafeGetField(classColor, "GetRGB")
+				if type(getRGB) == "function" then
+					local okColor, r, g, b = pcall(getRGB, classColor)
 					if okColor then
 						red, green, blue = r, g, b
 					end
@@ -152,13 +150,13 @@ local function BuildPreviewClassColorPool()
 		end
 	end
 
-	if type(CLASS_SORT_ORDER) == "table" then
+	if PvPTogether:CanAccessTable(CLASS_SORT_ORDER) then
 		for _, classToken in ipairs(CLASS_SORT_ORDER) do
 			AddClassColorByToken(classToken)
 		end
 	end
 
-	if #pool == 0 and type(RAID_CLASS_COLORS) == "table" then
+	if #pool == 0 and PvPTogether:CanAccessTable(RAID_CLASS_COLORS) then
 		for classToken in pairs(RAID_CLASS_COLORS) do
 			AddClassColorByToken(classToken)
 		end
@@ -212,16 +210,20 @@ local function AssignRandomClassInfoToPreview(previewFrame)
 end
 
 local function IsFrameForbidden(frame)
-	if not frame or type(frame.IsForbidden) ~= "function" then
+	local method, readable = PvPTogether:SafeGetField(frame, "IsForbidden")
+	if not readable then
+		return true
+	end
+	if type(method) ~= "function" then
 		return false
 	end
 
-	local ok, isForbidden = pcall(frame.IsForbidden, frame)
-	return ok and isForbidden and true or false
+	local ok, isForbidden = pcall(method, frame)
+	return not ok or PvPTogether:SafeToBoolean(isForbidden) ~= false
 end
 
 local function IsFrameMutable(frame)
-	return frame ~= nil and not IsFrameForbidden(frame)
+	return PvPTogether:CanAccessValue(frame) and frame ~= nil and not IsFrameForbidden(frame)
 end
 
 local function SetTextureTint(texture, red, green, blue, alpha)
@@ -248,6 +250,18 @@ end
 
 local function GetPreviewLayoutForStyle(styleValue)
 	return PREVIEW_STYLE_LAYOUTS[styleValue] or PREVIEW_STYLE_LAYOUTS[STYLE_MODERN]
+end
+
+local function SetPreviewAtlas(texture, atlas)
+	if type(texture.SetAtlas) ~= "function" or not (C_Texture and type(C_Texture.GetAtlasInfo) == "function") then
+		return false
+	end
+	local ok, info = pcall(C_Texture.GetAtlasInfo, atlas)
+	if not ok or not PvPTogether:CanAccessTable(info) then
+		return false
+	end
+	texture:SetAtlas(atlas, true)
+	return true
 end
 
 local function CreateNameplatePreview(parent, x, y)
@@ -297,17 +311,13 @@ local function CreateNameplatePreview(parent, x, y)
 	local healthBarBackground = healthBar:CreateTexture(nil, "BACKGROUND")
 	healthBarBackground:SetPoint("TOPLEFT", healthBar, "TOPLEFT", -2, 3)
 	healthBarBackground:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 6, -6)
-	if healthBarBackground.SetAtlas then
-		healthBarBackground:SetAtlas("UI-HUD-CoolDownManager-Bar-BG", true)
-	else
+	if not SetPreviewAtlas(healthBarBackground, "UI-HUD-CoolDownManager-Bar-BG") then
 		healthBarBackground:SetColorTexture(0.10, 0.10, 0.10, 0.82)
 	end
 	previewFrame.HealthBarBackground = healthBarBackground
 
 	local baseFill = healthBar:CreateTexture(nil, "ARTWORK", nil, 0)
-	if baseFill.SetAtlas then
-		baseFill:SetAtlas("UI-HUD-CoolDownManager-Bar", true)
-	else
+	if not SetPreviewAtlas(baseFill, "UI-HUD-CoolDownManager-Bar") then
 		baseFill:SetTexture("Interface\\Buttons\\WHITE8X8")
 	end
 	AnchorPreviewFillTexture(baseFill, healthBar)
@@ -316,9 +326,7 @@ local function CreateNameplatePreview(parent, x, y)
 	previewFrame.HealthFill = baseFill
 
 	local selectedBorder = healthBar:CreateTexture(nil, "OVERLAY", nil, 4)
-	if selectedBorder.SetAtlas then
-		selectedBorder:SetAtlas("UI-HUD-Nameplates-Selected", true)
-	else
+	if not SetPreviewAtlas(selectedBorder, "UI-HUD-Nameplates-Selected") then
 		selectedBorder:SetColorTexture(0.95, 0.95, 0.95, PREVIEW_DEFAULT_BORDER_ALPHA)
 	end
 	selectedBorder:SetPoint("TOPLEFT", healthBarBackground, "TOPLEFT", -1, 1)
@@ -426,9 +434,9 @@ local function RefreshNameplatePreview(previewFrame, unitKind, styleValue, borde
 		nameLabel:SetPoint("BOTTOMRIGHT", healthContainer, "TOPRIGHT", -6, PREVIEW_NAME_TO_BAR_GAP)
 	end
 
-	if layout.nameColorBySelection and nameLabel.SetTextColor then
-		nameLabel:SetTextColor(1, 0.14, 0.14, 1)
-	elseif nameLabel.SetTextColor then
+	-- These previews illustrate geometry. Native name coloring is global and
+	-- cannot safely become a per-unit-style override.
+	if nameLabel.SetTextColor then
 		nameLabel:SetTextColor(1, 1, 1, 1)
 	end
 
@@ -466,14 +474,14 @@ local function CreateCheckbox(parent, optionKey, labelText, tooltipText, x, y)
 
 	checkbox:SetScript("OnClick", function(self)
 		PvPTogether:SetOption(optionKey, self:GetChecked() == true)
-		PvPTogether:RefreshOptionsWindow()
 	end)
 
 	return checkbox
 end
 
 local function CreateDropdown(parent, titleText, tooltipText, x, y, width, initializeMenu)
-	if type(UIDropDownMenu_Initialize) ~= "function" or type(UIDropDownMenu_SetWidth) ~= "function" then
+	-- Use the supported menu API instead of the shared legacy dropdown globals.
+	if type(DropdownButtonMixin) ~= "table" then
 		return nil
 	end
 
@@ -481,41 +489,44 @@ local function CreateDropdown(parent, titleText, tooltipText, x, y, width, initi
 	title:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
 	title:SetText(titleText)
 
-	local dropdown = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
-	dropdown:SetPoint("TOPLEFT", title, "BOTTOMLEFT", -16, -2)
-	dropdown.initializeMenu = initializeMenu
+	local dropdown = CreateFrame("DropdownButton", nil, parent, "WowStyle1DropdownTemplate")
+	dropdown:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
 	dropdown.title = title
 	dropdown.tooltipText = tooltipText
 
-	UIDropDownMenu_SetWidth(dropdown, width or 200)
-	UIDropDownMenu_Initialize(dropdown, initializeMenu)
+	dropdown:SetWidth(width or 200)
+	dropdown:SetupMenu(initializeMenu)
 	return dropdown
 end
 
 local function CreateStyleDropdown(parent, titleText, tooltipText, x, y, optionKey)
-	return CreateDropdown(parent, titleText, tooltipText, x, y, 220, function(_, level)
-		local inheritInfo = UIDropDownMenu_CreateInfo()
-		inheritInfo.text = INHERIT_STYLE_MENU_LABEL
-		inheritInfo.value = INHERIT_STYLE_DROPDOWN_VALUE
-		inheritInfo.checked = not PvPTogether:IsNameplateStyle(PvPTogether:GetOption(optionKey))
-		inheritInfo.func = function()
-			PvPTogether:SetOption(optionKey, nil)
-			PvPTogether:RefreshOptionsWindow()
-			CloseDropDownMenus()
+	return CreateDropdown(parent, titleText, tooltipText, x, y, 220, function(_, rootDescription)
+		local function IsSelected(styleValue)
+			if styleValue == INHERIT_STYLE_DROPDOWN_VALUE then
+				return not PvPTogether:IsNameplateStyle(PvPTogether:GetOption(optionKey))
+			end
+			return PvPTogether:GetOption(optionKey) == styleValue
 		end
-		UIDropDownMenu_AddButton(inheritInfo, level)
+		local function SetSelected(styleValue)
+			local capabilities = PvPTogether:GetNameplateCapabilities()
+			if not PvPTogether.isEnabled or not capabilities.styleOverrides then
+				return
+			end
+			if styleValue == INHERIT_STYLE_DROPDOWN_VALUE then
+				PvPTogether:SetOption(optionKey, nil)
+			else
+				PvPTogether:SetOption(optionKey, styleValue)
+			end
+		end
+		rootDescription:CreateRadio(INHERIT_STYLE_MENU_LABEL, IsSelected, SetSelected, INHERIT_STYLE_DROPDOWN_VALUE)
 
 		for _, styleValue in ipairs(PvPTogether.nameplateStyleOrder) do
-			local info = UIDropDownMenu_CreateInfo()
-			info.text = PvPTogether:GetNameplateStyleLabel(styleValue)
-			info.value = styleValue
-			info.checked = PvPTogether:GetOption(optionKey) == styleValue
-			info.func = function()
-				PvPTogether:SetOption(optionKey, styleValue)
-				PvPTogether:RefreshOptionsWindow()
-				CloseDropDownMenus()
-			end
-			UIDropDownMenu_AddButton(info, level)
+			rootDescription:CreateRadio(
+				PvPTogether:GetNameplateStyleLabel(styleValue),
+				IsSelected,
+				SetSelected,
+				styleValue
+			)
 		end
 	end)
 end
@@ -539,20 +550,7 @@ local function ColorsNearlyEqual(left, right)
 end
 
 local function GetColorOption(optionKey, fallbackColor)
-	local configuredColor = PvPTogether:GetOption(optionKey)
-	if type(configuredColor) ~= "table" then
-		return {
-			r = fallbackColor.r,
-			g = fallbackColor.g,
-			b = fallbackColor.b,
-		}
-	end
-
-	return {
-		r = ClampColorComponent(configuredColor.r, fallbackColor.r),
-		g = ClampColorComponent(configuredColor.g, fallbackColor.g),
-		b = ClampColorComponent(configuredColor.b, fallbackColor.b),
-	}
+	return PvPTogether:NormalizeColorRGB(PvPTogether:GetOption(optionKey), fallbackColor)
 end
 
 local function IsColorOptionAtDefault(optionKey, fallbackColor)
@@ -592,13 +590,35 @@ local function CreateColorSwatch(parent, optionKey, labelText, tooltipText, fall
 			g = ClampColorComponent(g, fallbackColor.g),
 			b = ClampColorComponent(b, fallbackColor.b),
 		})
-		PvPTogether:RefreshOptionsWindow()
 	end
 
 	swatchButton:SetScript("OnClick", function()
-		if not (ColorPickerFrame and ColorPickerFrame.SetupColorPickerAndShow) then
+		if not PvPTogether.isEnabled or not PvPTogether:GetNameplateCapabilities().borderTint then
+			return
+		end
+		if PvPTogether:IsInCombatLockdown() then
+			PvPTogether:Print("Open the color picker after combat.")
+			return
+		end
+		local picker = ColorPickerFrame
+		if not IsFrameMutable(picker) then
 			PvPTogether:Print("Color picker is unavailable right now.")
 			return
+		end
+		local setup = PvPTogether:SafeGetField(picker, "SetupColorPickerAndShow")
+		local readColor = PvPTogether:SafeGetField(picker, "GetColorRGB")
+		if type(setup) ~= "function" or type(readColor) ~= "function" then
+			PvPTogether:Print("Color picker is unavailable right now.")
+			return
+		end
+		PvPTogether:InvalidateOptionsCallbacks()
+		local generation = PvPTogether.optionsCallbackGeneration
+		local database = PvPTogether.db
+		local function IsCurrentPicker()
+			return generation == PvPTogether.optionsCallbackGeneration
+				and database == PvPTogether.db
+				and PvPTogether.isEnabled
+				and PvPTogether:GetNameplateCapabilities().borderTint
 		end
 
 		local currentColor = GetColorOption(optionKey, fallbackColor)
@@ -614,28 +634,43 @@ local function CreateColorSwatch(parent, optionKey, labelText, tooltipText, fall
 		info.b = currentColor.b
 		info.hasOpacity = false
 		info.swatchFunc = function()
-			local r, g, b = ColorPickerFrame:GetColorRGB()
-			SetColorOption(r, g, b)
+			if not IsCurrentPicker() or not IsFrameMutable(picker) then
+				return
+			end
+			local ok, r, g, b = pcall(readColor, picker)
+			if ok then
+				local red = PvPTogether:SafeToNumber(r)
+				local green = PvPTogether:SafeToNumber(g)
+				local blue = PvPTogether:SafeToNumber(b)
+				if red ~= nil and green ~= nil and blue ~= nil then
+					SetColorOption(red, green, blue)
+				else
+					PvPTogether:RecordDiagnostic("picker-color-unavailable")
+				end
+			end
 		end
 		info.cancelFunc = function()
-			SetColorOption(previousColor.r, previousColor.g, previousColor.b)
+			if IsCurrentPicker() then
+				SetColorOption(previousColor.r, previousColor.g, previousColor.b)
+				PvPTogether:InvalidateOptionsCallbacks()
+			end
 		end
-		ColorPickerFrame:SetupColorPickerAndShow(info)
+		if not pcall(setup, picker, info) then
+			PvPTogether:InvalidateOptionsCallbacks()
+			PvPTogether:Print("Color picker is unavailable right now.")
+		end
 	end)
 
 	return swatchButton
 end
 
-local function RefreshDropdownControl(dropdown, labelText, selectedValue)
+local function RefreshDropdownControl(dropdown, labelText)
 	if not dropdown then
 		return
 	end
 
-	UIDropDownMenu_Initialize(dropdown, dropdown.initializeMenu)
-	UIDropDownMenu_SetText(dropdown, labelText)
-	if UIDropDownMenu_SetSelectedValue then
-		UIDropDownMenu_SetSelectedValue(dropdown, selectedValue)
-	end
+	dropdown:OverrideText(labelText)
+	dropdown:Update()
 end
 
 local function SetDropdownEnabled(dropdown, enabled)
@@ -643,12 +678,9 @@ local function SetDropdownEnabled(dropdown, enabled)
 		return
 	end
 
-	if UIDropDownMenu_EnableDropDown and UIDropDownMenu_DisableDropDown then
-		if enabled then
-			UIDropDownMenu_EnableDropDown(dropdown)
-		else
-			UIDropDownMenu_DisableDropDown(dropdown)
-		end
+	dropdown:SetEnabled(enabled)
+	if not enabled and dropdown.CloseMenu then
+		dropdown:CloseMenu()
 	end
 
 	dropdown:SetAlpha(enabled and 1 or 0.5)
@@ -696,6 +728,7 @@ function PvPTogether:RandomizeOptionsPreviewClasses()
 end
 
 function PvPTogether:StopOptionsPreviewTicker()
+	self.optionsPreviewGeneration = (self.optionsPreviewGeneration or 0) + 1
 	local ticker = self.optionsPreviewTicker
 	self.optionsPreviewTicker = nil
 	if ticker and type(ticker.Cancel) == "function" then
@@ -703,18 +736,29 @@ function PvPTogether:StopOptionsPreviewTicker()
 	end
 end
 
+function PvPTogether:InvalidateOptionsCallbacks()
+	self.optionsCallbackGeneration = (self.optionsCallbackGeneration or 0) + 1
+end
+
 function PvPTogether:StartOptionsPreviewTicker()
 	self:StopOptionsPreviewTicker()
 
-	if not (self.optionsFrame and self.optionsFrame.IsShown and self.optionsFrame:IsShown()) then
+	if not self.isEnabled or not (self.optionsFrame and self.optionsFrame.IsShown and self.optionsFrame:IsShown()) then
 		return
 	end
 	if not (C_Timer and type(C_Timer.NewTicker) == "function") then
 		return
 	end
 
+	local generation = self.optionsPreviewGeneration
 	self.optionsPreviewTicker = C_Timer.NewTicker(3, function()
-		if not (PvPTogether.optionsFrame and PvPTogether.optionsFrame.IsShown and PvPTogether.optionsFrame:IsShown()) then
+		-- Cancellation does not guarantee an already queued callback is gone.
+		if generation ~= PvPTogether.optionsPreviewGeneration or not PvPTogether.isEnabled then
+			return
+		end
+		if
+			not (PvPTogether.optionsFrame and PvPTogether.optionsFrame.IsShown and PvPTogether.optionsFrame:IsShown())
+		then
 			PvPTogether:StopOptionsPreviewTicker()
 			return
 		end
@@ -725,7 +769,8 @@ end
 
 function PvPTogether:RefreshOptionsPreviewsOnly()
 	local controls = self.optionControls or {}
-	local enabled = self:GetOption("enabled") == true
+	local capabilities = self.GetNameplateCapabilities and self:GetNameplateCapabilities() or {}
+	local enabled = self:GetOption("enabled") == true and capabilities.styleOverrides == true
 	local partyStyleValue = self:GetConfiguredStyleForUnitKind("partyMember")
 	local friendlyStyleValue = self:GetConfiguredStyleForUnitKind("friendlyPlayer")
 	local enemyStyleValue = self:GetConfiguredStyleForUnitKind("enemyPlayer")
@@ -763,8 +808,29 @@ function PvPTogether:RefreshOptionsPreviewsOnly()
 end
 
 function PvPTogether:RefreshOptionsWindow()
+	-- Context/CVar events also fire while the settings category is hidden.
+	if not self.optionsFrame or not self.optionsFrame:IsShown() then
+		return
+	end
 	local controls = self.optionControls or {}
 	local enabled = self:GetOption("enabled") == true
+	local capabilities = self.GetNameplateCapabilities and self:GetNameplateCapabilities() or {}
+	local stylesEnabled = enabled and capabilities.styleOverrides == true
+	local bordersEnabled = enabled and capabilities.borderTint == true
+	if controls.capabilityStatus then
+		local status = capabilities.reason or ""
+		if capabilities.styleOverrides and not controls.partyMemberStyle then
+			status = "Style selectors are unavailable on this client build."
+		end
+		if
+			enabled
+			and self.IsNameplateAugmentationBlockedInCurrentContext
+			and self:IsNameplateAugmentationBlockedInCurrentContext()
+		then
+			status = "Protected or inaccessible nameplates wait until restrictions end."
+		end
+		controls.capabilityStatus:SetText(status)
+	end
 
 	if controls.enabled then
 		controls.enabled:SetChecked(enabled)
@@ -781,49 +847,42 @@ function PvPTogether:RefreshOptionsWindow()
 	RefreshDropdownControl(controls.friendlyPlayerStyle, friendlyStyleLabel, friendlySelectedValue)
 	RefreshDropdownControl(controls.enemyPlayerStyle, enemyStyleLabel, enemySelectedValue)
 
-	SetDropdownEnabled(controls.partyMemberStyle, enabled)
-	SetDropdownEnabled(controls.friendlyPlayerStyle, enabled)
-	SetDropdownEnabled(controls.enemyPlayerStyle, enabled)
+	SetDropdownEnabled(controls.partyMemberStyle, stylesEnabled)
+	SetDropdownEnabled(controls.friendlyPlayerStyle, stylesEnabled)
+	SetDropdownEnabled(controls.enemyPlayerStyle, stylesEnabled)
 
 	if controls.partyMemberBorderEnabled then
 		controls.partyMemberBorderEnabled:SetChecked(partyBorderEnabled)
-		controls.partyMemberBorderEnabled:SetEnabled(enabled)
+		controls.partyMemberBorderEnabled:SetEnabled(bordersEnabled)
 		if controls.partyMemberBorderEnabled.Label then
-			controls.partyMemberBorderEnabled.Label:SetAlpha(enabled and 1 or 0.5)
+			controls.partyMemberBorderEnabled.Label:SetAlpha(bordersEnabled and 1 or 0.5)
 		end
 	end
 	if controls.friendlyPlayerBorderEnabled then
 		controls.friendlyPlayerBorderEnabled:SetChecked(friendlyBorderEnabled)
-		controls.friendlyPlayerBorderEnabled:SetEnabled(enabled)
+		controls.friendlyPlayerBorderEnabled:SetEnabled(bordersEnabled)
 		if controls.friendlyPlayerBorderEnabled.Label then
-			controls.friendlyPlayerBorderEnabled.Label:SetAlpha(enabled and 1 or 0.5)
+			controls.friendlyPlayerBorderEnabled.Label:SetAlpha(bordersEnabled and 1 or 0.5)
 		end
 	end
 	if controls.enemyPlayerBorderEnabled then
 		controls.enemyPlayerBorderEnabled:SetChecked(enemyBorderEnabled)
-		controls.enemyPlayerBorderEnabled:SetEnabled(enabled)
+		controls.enemyPlayerBorderEnabled:SetEnabled(bordersEnabled)
 		if controls.enemyPlayerBorderEnabled.Label then
-			controls.enemyPlayerBorderEnabled.Label:SetAlpha(enabled and 1 or 0.5)
+			controls.enemyPlayerBorderEnabled.Label:SetAlpha(bordersEnabled and 1 or 0.5)
 		end
 	end
 
-	RefreshColorSwatch(
-		controls.partyMemberBorderColor,
-		"partyMemberBorderColor",
-		self.DEFAULTS.partyMemberBorderColor
-	)
+	RefreshColorSwatch(controls.partyMemberBorderColor, "partyMemberBorderColor", self.DEFAULTS.partyMemberBorderColor)
 	RefreshColorSwatch(
 		controls.friendlyPlayerBorderColor,
 		"friendlyPlayerBorderColor",
 		self.DEFAULTS.friendlyPlayerBorderColor
 	)
-	RefreshColorSwatch(
-		controls.enemyPlayerBorderColor,
-		"enemyPlayerBorderColor",
-		self.DEFAULTS.enemyPlayerBorderColor
-	)
+	RefreshColorSwatch(controls.enemyPlayerBorderColor, "enemyPlayerBorderColor", self.DEFAULTS.enemyPlayerBorderColor)
 
 	if controls.resetPartyMemberBorderColor then
+		controls.resetPartyMemberBorderColor:SetEnabled(bordersEnabled)
 		if IsColorOptionAtDefault("partyMemberBorderColor", self.DEFAULTS.partyMemberBorderColor) then
 			controls.resetPartyMemberBorderColor:Hide()
 		else
@@ -831,6 +890,7 @@ function PvPTogether:RefreshOptionsWindow()
 		end
 	end
 	if controls.resetFriendlyPlayerBorderColor then
+		controls.resetFriendlyPlayerBorderColor:SetEnabled(bordersEnabled)
 		if IsColorOptionAtDefault("friendlyPlayerBorderColor", self.DEFAULTS.friendlyPlayerBorderColor) then
 			controls.resetFriendlyPlayerBorderColor:Hide()
 		else
@@ -838,6 +898,7 @@ function PvPTogether:RefreshOptionsWindow()
 		end
 	end
 	if controls.resetEnemyPlayerBorderColor then
+		controls.resetEnemyPlayerBorderColor:SetEnabled(bordersEnabled)
 		if IsColorOptionAtDefault("enemyPlayerBorderColor", self.DEFAULTS.enemyPlayerBorderColor) then
 			controls.resetEnemyPlayerBorderColor:Hide()
 		else
@@ -845,14 +906,18 @@ function PvPTogether:RefreshOptionsWindow()
 		end
 	end
 
-	SetColorSwatchEnabled(controls.partyMemberBorderColor, enabled and partyBorderEnabled)
-	SetColorSwatchEnabled(controls.friendlyPlayerBorderColor, enabled and friendlyBorderEnabled)
-	SetColorSwatchEnabled(controls.enemyPlayerBorderColor, enabled and enemyBorderEnabled)
+	SetColorSwatchEnabled(controls.partyMemberBorderColor, bordersEnabled and partyBorderEnabled)
+	SetColorSwatchEnabled(controls.friendlyPlayerBorderColor, bordersEnabled and friendlyBorderEnabled)
+	SetColorSwatchEnabled(controls.enemyPlayerBorderColor, bordersEnabled and enemyBorderEnabled)
 
 	self:RefreshOptionsPreviewsOnly()
 end
 
 function PvPTogether:OpenOptionsWindow()
+	if self:IsInCombatLockdown() then
+		self:Print("Open PvPTogether settings after combat. Use /pt on or /pt off in combat.")
+		return true
+	end
 	if not self.optionsFrame then
 		self:InitializeOptionsWindow()
 	end
@@ -870,12 +935,23 @@ function PvPTogether:InitializeOptionsWindow()
 		return
 	end
 
-	if type(UIDropDownMenu_Initialize) ~= "function" and type(UIParentLoadAddOn) == "function" then
-		pcall(UIParentLoadAddOn, "Blizzard_UIDropDownMenu")
+	if self:IsInCombatLockdown() then
+		return
+	end
+	if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then
+		-- Leave optionsFrame unset so a later open can retry after Settings loads.
+		self:Print("Settings API is unavailable; options could not be registered.")
+		return
 	end
 
-	local frame = CreateFrame("Frame", "PvPTogetherOptionsPanel")
-	frame.name = "PvPTogether"
+	local panel = CreateFrame("Frame", "PvPTogetherOptionsPanel")
+	panel.name = "PvPTogether"
+	local scrollFrame = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+	scrollFrame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
+	scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -28, 0)
+	local frame = CreateFrame("Frame", nil, scrollFrame)
+	frame:SetSize(640, 570)
+	scrollFrame:SetScrollChild(frame)
 
 	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -16)
@@ -883,15 +959,16 @@ function PvPTogether:InitializeOptionsWindow()
 
 	local subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-	subtitle:SetText("Per-unit-type Blizzard nameplate style overrides.")
+	subtitle:SetText("Per-unit-type Blizzard nameplate geometry and custom border colors.")
+	local enabledCheckbox = CreateCheckbox(frame, "enabled", "Enable PvPTogether", nil, 12, -48)
 
 	local sectionTitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-	sectionTitle:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -74)
+	sectionTitle:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -84)
 	sectionTitle:SetText("Style by Unit Type")
 
 	local sectionHelp = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	sectionHelp:SetPoint("TOPLEFT", sectionTitle, "BOTTOMLEFT", 0, -8)
-	sectionHelp:SetText("Choose from Blizzard's built-in nameplate styles for player unit types.")
+	sectionHelp:SetText("Choose player nameplate geometry from Blizzard's built-in styles.")
 
 	local partyMemberStyle = CreateStyleDropdown(
 		frame,
@@ -925,13 +1002,13 @@ function PvPTogether:InitializeOptionsWindow()
 	resetPartyMemberBorderColor:SetPoint("LEFT", partyMemberBorderColor, "RIGHT", 56, 0)
 	resetPartyMemberBorderColor:SetText("Reset")
 	resetPartyMemberBorderColor:SetScript("OnClick", function()
+		PvPTogether:InvalidateOptionsCallbacks()
 		local defaults = PvPTogether.DEFAULTS.partyMemberBorderColor
 		PvPTogether:SetOption("partyMemberBorderColor", {
 			r = defaults.r,
 			g = defaults.g,
 			b = defaults.b,
 		})
-		PvPTogether:RefreshOptionsWindow()
 	end)
 	local partyMemberPreview = CreateNameplatePreview(frame, PREVIEW_LEFT, -118)
 
@@ -967,13 +1044,13 @@ function PvPTogether:InitializeOptionsWindow()
 	resetFriendlyPlayerBorderColor:SetPoint("LEFT", friendlyPlayerBorderColor, "RIGHT", 56, 0)
 	resetFriendlyPlayerBorderColor:SetText("Reset")
 	resetFriendlyPlayerBorderColor:SetScript("OnClick", function()
+		PvPTogether:InvalidateOptionsCallbacks()
 		local defaults = PvPTogether.DEFAULTS.friendlyPlayerBorderColor
 		PvPTogether:SetOption("friendlyPlayerBorderColor", {
 			r = defaults.r,
 			g = defaults.g,
 			b = defaults.b,
 		})
-		PvPTogether:RefreshOptionsWindow()
 	end)
 	local friendlyPlayerPreview = CreateNameplatePreview(frame, PREVIEW_LEFT, -242)
 
@@ -1009,25 +1086,31 @@ function PvPTogether:InitializeOptionsWindow()
 	resetEnemyPlayerBorderColor:SetPoint("LEFT", enemyPlayerBorderColor, "RIGHT", 56, 0)
 	resetEnemyPlayerBorderColor:SetText("Reset")
 	resetEnemyPlayerBorderColor:SetScript("OnClick", function()
+		PvPTogether:InvalidateOptionsCallbacks()
 		local defaults = PvPTogether.DEFAULTS.enemyPlayerBorderColor
 		PvPTogether:SetOption("enemyPlayerBorderColor", {
 			r = defaults.r,
 			g = defaults.g,
 			b = defaults.b,
 		})
-		PvPTogether:RefreshOptionsWindow()
 	end)
 	local enemyPlayerPreview = CreateNameplatePreview(frame, PREVIEW_LEFT, -366)
 
-	if not partyMemberStyle or not friendlyPlayerStyle or not enemyPlayerStyle then
-		local missingDropdownWarning = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-		missingDropdownWarning:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -170)
-		missingDropdownWarning:SetWidth(680)
-		missingDropdownWarning:SetJustifyH("LEFT")
-		missingDropdownWarning:SetText("Dropdown UI is unavailable on this client build; style selectors could not be created.")
-	end
+	local capabilityStatus = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	capabilityStatus:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -478)
+	capabilityStatus:SetWidth(610)
+	capabilityStatus:SetJustifyH("LEFT")
+	local scopeHelp = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	scopeHelp:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -514)
+	scopeHelp:SetWidth(610)
+	scopeHelp:SetJustifyH("LEFT")
+	scopeHelp:SetText(
+		"Name colors, click areas and stacking follow Blizzard's global settings. Global Classic style keeps its native geometry."
+	)
 
 	self.optionControls = {
+		enabled = enabledCheckbox,
+		capabilityStatus = capabilityStatus,
 		partyMemberStyle = partyMemberStyle,
 		friendlyPlayerStyle = friendlyPlayerStyle,
 		enemyPlayerStyle = enemyPlayerStyle,
@@ -1045,24 +1128,19 @@ function PvPTogether:InitializeOptionsWindow()
 		enemyPlayerPreview = enemyPlayerPreview,
 	}
 
-	frame:SetScript("OnShow", function()
+	panel:SetScript("OnShow", function()
 		PvPTogether:RandomizeOptionsPreviewClasses()
 		PvPTogether:RefreshOptionsWindow()
 		PvPTogether:StartOptionsPreviewTicker()
 	end)
-	frame:SetScript("OnHide", function()
+	panel:SetScript("OnHide", function()
+		PvPTogether:InvalidateOptionsCallbacks()
 		PvPTogether:StopOptionsPreviewTicker()
 	end)
 
-	self.optionsFrame = frame
+	self.optionsFrame = panel
 
-	if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then
-		self:Print("Settings API is unavailable; options could not be registered.")
-		self.optionsCategory = nil
-		return
-	end
-
-	local category = Settings.RegisterCanvasLayoutCategory(frame, frame.name, frame.name)
+	local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name, panel.name)
 	Settings.RegisterAddOnCategory(category)
 	self.optionsCategory = category
 	self:RefreshOptionsWindow()

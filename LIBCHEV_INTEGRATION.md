@@ -1,0 +1,29 @@
+# libchev integration — September 24, 2026
+
+PvPTogether vendors **libchev 1.0.0** at immutable commit [`09ac76eb6fe8e9589b809188652950c3cd9e444c`](https://github.com/AlexAllocated/libchev/commit/09ac76eb6fe8e9589b809188652950c3cd9e444c). `Libs/libchev/manifest.json` records SHA-256 hashes for each embedded source/license file. The upstream vendor tool verified the provisional embed against its historical Git revision before migrating it. Embedded source was not edited locally.
+
+Each addon loader gets its own `namespace.LibChev`. PvPTogether captures that private instance; there is no global registry or provisional `Together` alias. Nameplate classification, native permissions, restriction checks, journal ownership, and lifecycle decisions remain in PvPTogether. Only weak-table construction and generation fencing use shared helpers.
+
+## User-visible behavior
+
+- `/pt diagnostics` opens a copyable report with common addon/library/client headers, existing capability/settings/pending-work details, bounded counters, and sampled static reasons. The first three occurrences and every hundredth occurrence of a reason are sampled. History is bounded to 60 entries of at most 100 characters each.
+- Restricted or unavailable report UI falls back to chat. Region mutation requires both the library's owned-region checks and PvPTogether's native permission checks. Callbacks recheck restrictions; window-construction failures are contained without printing the foreign exception.
+- `/pt test` runs **12 detached checks**: 10 shared self-tests plus 2 addon checks. It does not replace engine APIs, create nameplates, reset runtime stores, or modify saved settings. Failure output contains static test labels and a summary, not raw foreign error payloads. The standalone offline runner executes these same bodies too.
+
+The release candidate is **1.1.0-beta.1**, with [release notes](CHANGELOG.md). Publication uses the existing annotated-tag convention and a GitHub prerelease. The prior [Retail/Forever audit](AUDIT_2026-09-24.md) and its live-validation limits still apply.
+
+## Verified results
+
+- **129/129 offline tests**, normal and reverse order, under both actual **Lua 5.1.5** and **Lua 5.2.4**.
+- All **12 Lua files** parse under both interpreters; StyLua and diff whitespace checks pass.
+- TOC order resolves all seven runtime files; offline runners/engine fixtures remain excluded.
+- Upstream `scripts/vendor.py --check` validates the exact embedded revision and hashes.
+- Integration tests exercise the actual 12 live-check bodies and runner, no live-state mutation, private copies in both addon load orders, report creation/reuse, native-permission rejection, restriction transitions, chat fallback, error-payload suppression, and bounded reason sampling. Existing Retail and Forever geometry/lifecycle regressions continue to pass.
+
+These are offline checks. No real-client report copy/paste, `/pt test`, combat, visual, or taint session was performed for this extraction. The existing Retail and Forever symlinks still resolve to this checkout, so the next UI load uses it. No saved variables or client configuration files were edited.
+
+## Next client checks
+
+Reload Retail and Forever, run `/pt test` (expect 12 passed), then `/pt diagnostics`. Verify the report can be selected/copied, scrolled, closed, and reopened. During restrictions, diagnostics should fall back to chat; callbacks from an already-open report should stop until restrictions end. Repeat the prior audit's combat, recycled-plate, settings, disable/re-enable, and multi-addon checks. Report the client build, copied diagnostics, and the first error/blocked-action stack separately if a failure occurs.
+
+For future library updates, use the upstream vendor script with an exact reviewed commit, then repeat consumer validation. Never hand-edit files under `Libs/libchev`.
