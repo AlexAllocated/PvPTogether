@@ -7,6 +7,10 @@
 ## SavedVariablesPerCharacter: PvPTogetherDBChar
 ## Author: Chev
 
+Libs/libchev/libchev.lua
+Libs/libchev/ReportWindow.lua
+Libs/libchev/SelfTests.lua
 Core.lua
 Nameplates.lua
 Options.lua
+InGameTests.lua

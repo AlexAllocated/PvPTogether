@@ -26,6 +26,7 @@ return function(root)
 
 	function H.new(options)
 		options = options or {}
+		local namespace = {}
 		local state = {
 			combat = false,
 			instanceType = "none",
@@ -399,11 +400,54 @@ return function(root)
 			"CloseMenu",
 			"OverrideText",
 			"Update",
+			"SetClampedToScreen",
+			"EnableMouse",
+			"EnableMouseWheel",
+			"SetMultiLine",
+			"SetAutoFocus",
+			"SetTextInsets",
+			"HighlightText",
 		}) do
 			local method = name
 			frameMethods[method] = function(self, ...)
 				mutate(self, method, ...)
 			end
+		end
+		function frameMethods:SetText(value)
+			mutate(self, "SetText", value)
+			data(self).text = value
+			local callback = data(self).scripts.OnTextChanged
+			if callback then
+				callback(self, false)
+			end
+		end
+		function frameMethods:GetText()
+			return data(self).text
+		end
+		function frameMethods:GetStringHeight()
+			return result(self, "GetStringHeight", 240)
+		end
+		function frameMethods:GetVerticalScroll()
+			return data(self).scroll or 0
+		end
+		function frameMethods:GetVerticalScrollRange()
+			return 1000
+		end
+		function frameMethods:SetVerticalScroll(value)
+			mutate(self, "SetVerticalScroll", value)
+			data(self).scroll = value
+		end
+		function frameMethods:SetFocus()
+			mutate(self, "SetFocus")
+			data(self).focused = true
+			local callback = data(self).scripts.OnEditFocusGained
+			if callback then
+				callback(self)
+			end
+		end
+		function frameMethods:ClearFocus()
+			mutate(self, "ClearFocus")
+			data(self).focused = false
 		end
 
 		function state:frame(fields, foreign)
@@ -595,7 +639,7 @@ return function(root)
 			end,
 		}
 
-		function state:load(file)
+		function state:load(file, loaderNamespace, loaderName)
 			local chunk, err
 			if setfenv then
 				chunk, err = loadfile(root .. "/" .. file)
@@ -605,7 +649,7 @@ return function(root)
 			else
 				chunk, err = loadfile(root .. "/" .. file, "t", env)
 			end
-			assert(chunk, err)("PvPTogether", {})
+			assert(chunk, err)(loaderName or "PvPTogether", loaderNamespace or namespace)
 		end
 		function state:flushTimers()
 			local queued = self.timers
@@ -711,7 +755,11 @@ return function(root)
 		if options.configure then
 			options.configure(env, state)
 		end
+		state:load("Libs/libchev/libchev.lua")
+		state:load("Libs/libchev/ReportWindow.lua")
+		state:load("Libs/libchev/SelfTests.lua")
 		state:load("Core.lua")
+		state:load("InGameTests.lua")
 		if not options.coreOnly then
 			state:load("Nameplates.lua")
 		end

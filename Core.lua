@@ -1,7 +1,9 @@
 local addonName, addonTable = ...
+local LibChev = assert(addonTable and addonTable.LibChev, "libchev must load before Core.lua")
 
 local PvPTogether = _G.PvPTogether or addonTable or {}
 _G.PvPTogether = PvPTogether
+PvPTogether.LibChev = LibChev
 
 local raw_issecretvalue = type(issecretvalue) == "function" and issecretvalue or nil
 local raw_canaccessvalue = type(canaccessvalue) == "function" and canaccessvalue or nil
@@ -66,7 +68,7 @@ PvPTogether.isInitialized = PvPTogether.isInitialized or false
 PvPTogether.hasLoggedIn = PvPTogether.hasLoggedIn or false
 PvPTogether.isEnabled = PvPTogether.isEnabled or false
 PvPTogether.db = PvPTogether.db or nil
-PvPTogether.trackedNamePlateFrames = PvPTogether.trackedNamePlateFrames or setmetatable({}, { __mode = "k" })
+PvPTogether.trackedNamePlateFrames = PvPTogether.trackedNamePlateFrames or LibChev.WeakKeys()
 
 local function IsNonEmptyString(value)
 	return type(value) == "string" and PvPTogether:CanAccessValue(value) and value ~= ""
@@ -563,37 +565,28 @@ end
 -- Counters only: never retain foreign error text, unit tokens, GUIDs, or values.
 -- Bound both the number of reasons and each count for long-running sessions.
 function PvPTogether:RecordDiagnostic(reason)
-	if
-		type(reason) ~= "string"
-		or not self:CanAccessValue(reason)
-		or #reason > 48
-		or not reason:match("^[%w_%-]+$")
-	then
-		return
+	self.diagnosticCounterStore = self.diagnosticCounterStore or LibChev.NewCounters()
+	local count = LibChev.Count(self.diagnosticCounterStore, reason)
+	self.diagnosticCounts = self.diagnosticCounterStore.counts
+	self.diagnosticReasonCount = self.diagnosticCounterStore.size
+	-- Sample only static reasons; preserve the established no-identity policy.
+	if count and (count <= 3 or count % 100 == 0) then
+		self.diagnosticLog = self.diagnosticLog or LibChev.NewLog()
+		LibChev.AppendLog(
+			self.diagnosticLog,
+			reason .. " count=" .. count,
+			"STATE",
+			nil,
+			{ maxLines = 60, maxEntry = 100 }
+		)
 	end
-	self.diagnosticCounts = self.diagnosticCounts or {}
-	self.diagnosticReasonCount = self.diagnosticReasonCount or 0
-	if self.diagnosticCounts[reason] == nil then
-		if self.diagnosticReasonCount >= 24 then
-			return
-		end
-		self.diagnosticReasonCount = self.diagnosticReasonCount + 1
-	end
-	self.diagnosticCounts[reason] = math.min(99999, (self.diagnosticCounts[reason] or 0) + 1)
 end
 
 function PvPTogether:GetDiagnosticSnapshot()
-	local snapshot = {}
-	for reason, count in pairs(self.diagnosticCounts or {}) do
-		snapshot[#snapshot + 1] = { reason = reason, count = count }
-	end
-	table.sort(snapshot, function(left, right)
-		return left.reason < right.reason
-	end)
-	return snapshot
+	return LibChev.CounterSnapshot(self.diagnosticCounterStore or LibChev.NewCounters())
 end
 
-function PvPTogether:PrintDiagnostics()
+function PvPTogether:BuildDiagnostics()
 	local addonVersion = "unknown"
 	local getMetadata = self:SafeGetField(C_AddOns, "GetAddOnMetadata")
 	if type(getMetadata) == "function" then
@@ -602,96 +595,76 @@ function PvPTogether:PrintDiagnostics()
 			addonVersion = self:SafeToString(value, addonVersion)
 		end
 	end
-	self:Print("Version " .. addonVersion .. ".")
-	local version, build, _, interfaceVersion
-	if type(GetBuildInfo) == "function" then
-		local ok
-		ok, version, build, _, interfaceVersion = pcall(GetBuildInfo)
-		if not ok then
-			version, build, interfaceVersion = nil, nil, nil
-		end
+	local environment = LibChev.ReadEnvironment({ GetBuildInfo = GetBuildInfo, GetLocale = GetLocale })
+	local report = LibChev.DiagnosticReport("PvPTogether", addonVersion, environment)
+	local function Add(label, value)
+		report:Add(label, value)
 	end
-	self:Print(
-		"Client "
-			.. self:SafeToString(version, "unknown")
-			.. " build "
-			.. self:SafeToString(build, "unknown")
-			.. "; interface "
-			.. self:SafeToString(interfaceVersion, "unknown")
-			.. "."
-	)
 	local capabilities = self.GetNameplateCapabilities and self:GetNameplateCapabilities() or {}
-	self:Print(
-		"Enabled: "
-			.. (self.isEnabled and "yes" or "no")
-			.. "; style overrides: "
-			.. (capabilities.styleOverrides and "available" or "unavailable")
-			.. "; border tint: "
-			.. (capabilities.borderTint and "available" or "unavailable")
-			.. "."
+	Add("enabled", self.isEnabled == true)
+	Add("capability.styleOverrides", capabilities.styleOverrides == true)
+	Add("capability.borderTint", capabilities.borderTint == true)
+	Add("capability.reason", capabilities.reason or "none")
+	Add(
+		"runtimeRestricted",
+		self.IsNameplateAugmentationBlockedInCurrentContext and self:IsNameplateAugmentationBlockedInCurrentContext()
+			or self:IsInCombatLockdown()
 	)
-	if IsNonEmptyString(capabilities.reason) then
-		self:Print(capabilities.reason)
-	end
-	local restricted = self.IsNameplateAugmentationBlockedInCurrentContext
-			and self:IsNameplateAugmentationBlockedInCurrentContext()
-		or self:IsInCombatLockdown()
-	self:Print(
-		"Restrictions active: "
-			.. (restricted and "yes" or "no")
-			.. "; combat lockdown: "
-			.. (self:IsInCombatLockdown() and "yes" or "no")
-			.. "; secret/access guards: "
-			.. ((raw_issecretvalue or raw_canaccessvalue) and "present" or "not provided")
-			.. "."
-	)
-	local function CountOwnedEntries(entries)
+	Add("combat", self:IsInCombatLockdown())
+	Add("secretGuards", (raw_issecretvalue or raw_canaccessvalue) ~= nil)
+	local function Count(entries)
 		local count = 0
-		-- These are addon-owned maps. Count keys without inspecting frame objects.
 		for _ in pairs(entries or {}) do
 			count = count + 1
 		end
 		return count
 	end
-	self:Print(
-		"Pending cleanup: "
-			.. (self.pendingNameplateResetAfterCombat and "yes" or "no")
-			.. "; pending refresh: "
-			.. ((self.pendingNameplateRefreshAfterCombat or self.nameplateRefreshScheduled) and "yes" or "no")
-			.. "; queued plates: "
-			.. CountOwnedEntries(self.nameplatePendingFrames)
-			.. "."
-	)
-	self:Print(
-		"Retained layouts: "
-			.. CountOwnedEntries(self.nameplateStateByFrame)
-			.. "; tracked plates: "
-			.. CountOwnedEntries(self.trackedNamePlateFrames)
-			.. "; border overlays: "
-			.. CountOwnedEntries(self.nameplateBorderTintByUnitFrame)
-			.. "."
-	)
-	self:Print("Global style: " .. self:GetNameplateStyleLabel(self:GetCurrentGlobalNameplateStyle()) .. ".")
-	for _, unitKind in ipairs({ "partyMember", "friendlyPlayer", "enemyPlayer" }) do
-		local styleValue = self:GetOption(unitKind .. "Style")
-		local styleLabel = self:IsNameplateStyle(styleValue) and self:GetNameplateStyleLabel(styleValue)
-			or "inherit global"
-		self:Print(
-			unitKind
-				.. ": geometry "
-				.. styleLabel
-				.. "; custom border "
-				.. (self:IsBorderColorOverrideEnabledForUnitKind(unitKind) and "on" or "off")
-				.. "."
-		)
+	Add("pendingCleanup", self.pendingNameplateResetAfterCombat == true)
+	Add("pendingRefresh", self.pendingNameplateRefreshAfterCombat == true or self.nameplateRefreshScheduled == true)
+	Add("queuedPlates", Count(self.nameplatePendingFrames))
+	Add("retainedLayouts", Count(self.nameplateStateByFrame))
+	Add("trackedPlates", Count(self.trackedNamePlateFrames))
+	Add("borderOverlays", Count(self.nameplateBorderTintByUnitFrame))
+	Add("globalStyle", self:GetNameplateStyleLabel(self:GetCurrentGlobalNameplateStyle()))
+	for _, kind in ipairs({ "partyMember", "friendlyPlayer", "enemyPlayer" }) do
+		local style = self:GetOption(kind .. "Style")
+		Add(kind .. ".style", self:IsNameplateStyle(style) and self:GetNameplateStyleLabel(style) or "inherit global")
+		Add(kind .. ".border", self:IsBorderColorOverrideEnabledForUnitKind(kind))
 	end
-	local snapshot = self:GetDiagnosticSnapshot()
-	if #snapshot == 0 then
-		self:Print("No diagnostic counters recorded this session.")
-	else
-		for _, entry in ipairs(snapshot) do
-			self:Print(entry.reason .. ": " .. entry.count)
-		end
+	for _, entry in ipairs(self:GetDiagnosticSnapshot()) do
+		Add("counter." .. entry.reason, entry.count)
+	end
+	Add("log.dropped", self.diagnosticLog and self.diagnosticLog.dropped or 0)
+	for index, entry in ipairs(self.diagnosticLog and self.diagnosticLog.entries or {}) do
+		Add("event." .. index, LibChev.FormatEntry(entry))
+	end
+	return report:Text()
+end
+
+function PvPTogether:PrintDiagnostics()
+	local report = self:BuildDiagnostics()
+	local opened, displayed = pcall(LibChev.OpenReportWindow, self, report, {
+		title = "PvPTogether Diagnostics",
+		parent = UIParent,
+		createFrame = CreateFrame,
+		restricted = function()
+			return not self.IsNameplateAugmentationBlockedInCurrentContext
+				or self:IsNameplateAugmentationBlockedInCurrentContext()
+		end,
+		canMutate = function(region)
+			return LibChev.CanMutateOwnedRegion(region)
+				and type(self.CanMutateNameplateFrame) == "function"
+				and self:CanMutateNameplateFrame(region)
+		end,
+	})
+	if opened and self:SafeToBoolean(displayed) == true then
+		return
+	end
+	if not opened then
+		self:RecordDiagnostic("report-window-unavailable")
+	end
+	for line in report:gmatch("[^\n]+") do
+		self:Print(line)
 	end
 end
 
@@ -706,6 +679,10 @@ function PvPTogether:RegisterSlashCommands()
 		local command = self:SafeToString(message, "")
 		command = command:lower():gsub("^%s+", ""):gsub("%s+$", "")
 
+		if command == "test" then
+			self:RunTests()
+			return
+		end
 		if command == "diagnostics" or command == "diag" then
 			self:PrintDiagnostics()
 			return
@@ -726,7 +703,7 @@ function PvPTogether:RegisterSlashCommands()
 			return
 		end
 		if not self:OpenOptionsWindow() then
-			self:Print("Use /pt on, /pt off, /pt toggle, or /pt diagnostics.")
+			self:Print("Use /pt on, /pt off, /pt toggle, /pt diagnostics, or /pt test.")
 		end
 	end
 

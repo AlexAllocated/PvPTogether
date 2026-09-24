@@ -2,14 +2,15 @@ local PvPTogether = _G.PvPTogether
 if not PvPTogether then
 	return
 end
+local LibChev = PvPTogether.LibChev
 
 -- All bookkeeping belongs to the addon. Never call Blizzard's setup/reset mixins:
 -- those write shared option tables and frame fields even outside combat.
 PvPTogether.nameplateStateByFrame = {}
 PvPTogether.nameplateFrameByUnitToken = {}
-PvPTogether.nameplateHooksByUnitFrame = setmetatable({}, { __mode = "k" })
-PvPTogether.nameplateBorderTintByUnitFrame = setmetatable({}, { __mode = "k" })
-PvPTogether.nameplateStateByUnitFrame = setmetatable({}, { __mode = "k" })
+PvPTogether.nameplateHooksByUnitFrame = LibChev.WeakKeys()
+PvPTogether.nameplateBorderTintByUnitFrame = LibChev.WeakKeys()
+PvPTogether.nameplateStateByUnitFrame = LibChev.WeakKeys()
 
 local function Field(object, key)
 	local value = PvPTogether:SafeGetField(object, key)
@@ -929,24 +930,23 @@ function PvPTogether:ScheduleReapplyAllNameplateStyles(delay, frame)
 		return
 	end
 	self.nameplateRefreshScheduled = true
-	local generation = self.nameplateScheduledReapplyGeneration or 0
-	after(math.max(0, self:SafeToNumber(delay) or 0), function()
-		if PvPTogether.nameplateScheduledReapplyGeneration ~= generation then
-			return
-		end
-		PvPTogether.nameplateRefreshScheduled = false
-		local frames, full = PvPTogether.nameplatePendingFrames, PvPTogether.nameplateFullRefreshPending
-		PvPTogether.nameplatePendingFrames, PvPTogether.nameplateFullRefreshPending = nil, false
-		if PvPTogether.isEnabled then
-			if full then
-				PvPTogether:ReapplyAllNameplateStyles()
-			else
-				for pending in pairs(frames or {}) do
-					PvPTogether:ReapplyStyleForNameplateFrame(pending)
+	after(
+		math.max(0, self:SafeToNumber(delay) or 0),
+		LibChev.Fence(self, { "nameplateScheduledReapplyGeneration" }, function()
+			PvPTogether.nameplateRefreshScheduled = false
+			local frames, full = PvPTogether.nameplatePendingFrames, PvPTogether.nameplateFullRefreshPending
+			PvPTogether.nameplatePendingFrames, PvPTogether.nameplateFullRefreshPending = nil, false
+			if PvPTogether.isEnabled then
+				if full then
+					PvPTogether:ReapplyAllNameplateStyles()
+				else
+					for pending in pairs(frames or {}) do
+						PvPTogether:ReapplyStyleForNameplateFrame(pending)
+					end
 				end
 			end
-		end
-	end)
+		end)
+	)
 end
 
 function PvPTogether:TryInstallNameplateHooks()
@@ -1026,7 +1026,7 @@ function PvPTogether:EnsureNameplateEventFrame()
 end
 
 local function InvalidateDeferred(addon)
-	addon.nameplateScheduledReapplyGeneration = (addon.nameplateScheduledReapplyGeneration or 0) + 1
+	LibChev.Advance(addon, "nameplateScheduledReapplyGeneration")
 	addon.nameplateRefreshScheduled = false
 	addon.nameplatePendingFrames, addon.nameplateFullRefreshPending = nil, false
 	addon.pendingNameplateRefreshAfterCombat = false

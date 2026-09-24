@@ -4,7 +4,7 @@
 -- runtime test patches a real Blizzard global, frame, mixin, or saved variable.
 local root = arg[1] or "."
 local harness = assert(loadfile(root .. "/tests/harness.lua"))()(root)
-for _, suite in ipairs({ "core", "nameplates" }) do
+for _, suite in ipairs({ "core", "nameplates", "integration" }) do
 	assert(loadfile(root .. "/tests/" .. suite .. ".lua"))()(harness)
 end
 
@@ -15,16 +15,14 @@ if arg[2] == "reverse" then
 	end
 end
 
-local passed, failed = 0, 0
-for _, case in ipairs(harness.cases) do
-	local ok, err = pcall(case.run)
-	if ok then
-		passed = passed + 1
-	else
-		failed = failed + 1
-		io.write("FAIL ", case.name, ": ", tostring(err), "\n")
-	end
-end
-io.write(string.format("Offline regressions: %d passed, %d failed (%d total).\n", passed, failed, #harness.cases))
+local LibChev = assert(loadfile(root .. "/Libs/libchev/libchev.lua"))()
+local result = LibChev.RunTests(harness.cases, {
+	onFailure = function(failure)
+		io.write("FAIL ", failure.name, ": ", failure.error, "\n")
+	end,
+})
+io.write(
+	string.format("Offline regressions: %d passed, %d failed (%d total).\n", result.passed, result.failed, result.total)
+)
 io.write("These fixtures cannot establish live-client taint safety or visual correctness.\n")
-os.exit(failed == 0 and 0 or 1)
+os.exit(result.failed == 0 and 0 or 1)

@@ -15,8 +15,9 @@ Read `AUDIT_2026-09-24.md` and `FOREVER_COMPATIBILITY.md` before changing client
 
 ## Validation
 
-- Run `luac -p Core.lua Nameplates.lua Options.lua`, `lua scripts/test.lua`, `lua scripts/test.lua . reverse`, and `git diff --check` for behavior changes. Use `stylua --check` on changed Lua files after formatting.
+- Run `luac -p Core.lua Nameplates.lua Options.lua InGameTests.lua Libs/libchev/*.lua`, `lua scripts/test.lua`, `lua scripts/test.lua . reverse`, and `git diff --check` for behavior changes. Use `stylua --check` on changed Lua files after formatting.
 - Tests under `tests/` and `scripts/test.lua` run only in a separate offline Lua process. Never list them in an addon TOC or add an in-game command that loads them.
+- `/pt test` may run only `InGameTests.lua` and embedded `SelfTests.lua` using detached private values. Never load offline fixtures through that command; print static case labels and summaries, not raw failure payloads.
 - Test production code in fresh private environments with private fixtures. Never patch real Blizzard globals, live frames, mixins, shared UI tables, `issecretvalue`, `hooksecurefunc`, or `C_*` APIs from a live client test.
 - Verify regressions through observable behavior: no foreign frame writes, no forbidden/protected mutations, safe unknown-unit classification, recycled plate cleanup, deferred generation invalidation, and disable/re-enable recovery.
 - Report offline checks separately from actual Retail/Forever visual, gameplay, and taint validation. Use `/pt diagnostics` for bounded in-game status; it is not a taint certification test.
@@ -24,3 +25,7 @@ Read `AUDIT_2026-09-24.md` and `FOREVER_COMPATIBILITY.md` before changing client
 ## Delivery
 
 Preserve existing user work and SavedVariables. Do not overwrite or delete saves without a backup. Release scripts commit, push and tag; run them only when publishing a release is explicitly authorized. Keep audit changes on a reviewable local branch unless publication is requested.
+
+## Shared library
+
+Embed libchev only through its `scripts/vendor.py` from an exact validated commit. The loader contract is `namespace.LibChev`; each addon receives an independent instance under `Libs/libchev`. Never edit embedded library files, create a global registry, or retain the provisional `namespace.Together` alias. Keep nameplate access, restriction, identity, and lifecycle policies in this addon. Preserve the no-identity diagnostics policy and bounded static-reason sampling.
