@@ -8,21 +8,21 @@ Each addon loader gets its own `namespace.LibChev`. PvPTogether captures that pr
 
 - `/pt debug` and `/pt dump` open the common console. All consumers use the same category popup, fuzzy/quoted search, tail-following scroll behavior, copy/clear controls, and test/diagnostics/log/reload buttons. `/pt dump CATEGORY` selects a category; `/pt dump clear` clears history without resetting nameplate counters.
 
-- `/pt diagnostics` opens a copyable report with common addon/library/client headers, existing capability/settings/pending-work details, bounded counters, and sampled static reasons. The first three occurrences and every hundredth occurrence of a reason are sampled. History is bounded to 60 entries of at most 100 characters each.
+- `/pt diagnostics` opens a copyable report with common addon/library/client headers, existing capability/settings/pending-work details, bounded counters, and sampled static reasons. The first three occurrences and every hundredth occurrence of a reason are sampled. History is bounded to 60 entries of at most 100 characters each. An accessible finite `GetTime` value supplies timestamps to the shared formatter; sequence numbers and formatting remain library-owned. Unavailable or unsafe clock values are omitted.
 - Restricted or unavailable report UI falls back to chat. Region mutation requires both the library's owned-region checks and PvPTogether's native permission checks. Callbacks recheck restrictions; window-construction failures are contained without printing the foreign exception.
 - `/pt test` runs **15 detached checks**: 13 shared self-tests plus 2 addon checks. It does not replace engine APIs, create nameplates, reset runtime stores, or modify saved settings. Failure output contains static test labels and a summary, not raw foreign error payloads. The standalone offline runner executes these same bodies too. The slash command replaces TEST history and presents current results in the shared console, with chat fallback under the same guards as general diagnostics. Programmatic `RunTests()` remains headless by default; `RunTests(true)` explicitly requests presentation.
 
-The addon version is **1.1.0-beta.2**, with [release notes](CHANGELOG.md). Publication uses the existing annotated-tag convention and a GitHub prerelease. The prior [Retail/Forever audit](AUDIT_2026-09-24.md) and its live-validation limits still apply.
+The addon version is **1.1.0-beta.3**, with [release notes](CHANGELOG.md). Publication uses the existing annotated-tag convention and a GitHub prerelease. The prior [Retail/Forever audit](AUDIT_2026-09-24.md) and its live-validation limits still apply.
 
 ## Validation
 
-- **141/141 offline tests**, normal and reverse order, under both actual **Lua 5.1.5** and **Lua 5.2.4**.
+- **144/144 offline tests**, normal and reverse order, under both actual **Lua 5.1.5** and **Lua 5.2.4**.
 - All **14 Lua files** parse under both interpreters; StyLua and diff whitespace checks pass.
 - TOC order resolves all nine runtime files; offline runners/engine fixtures remain excluded.
 - Upstream `scripts/vendor.py --check` validates the exact embedded revision and hashes.
 - Integration tests exercise the actual 15 live-check bodies and headless runner, no live-state mutation from headless execution, shared command and button behavior, private copies in both addon load orders, report creation/reuse, native-permission rejection, restriction transitions, chat fallback, error-payload suppression, and bounded reason sampling. Existing Retail and Forever geometry/lifecycle regressions continue to pass.
 
-These are offline checks. No real-client report copy/paste, `/pt test`, combat, visual, or taint session was performed for this extraction. The existing Retail and Forever symlinks still resolve to this checkout, so the next UI load uses it. No saved variables or client configuration files were edited.
+These automated checks are offline. The user reported all 15 `/pt test` checks passing on Forever 1.60.1 build 70009 with beta.2. That confirms that self-test run only; it does not establish combat/taint safety or validate the next shared-console revision. No new real-client report copy/paste, combat, or taint session was performed for this update. The existing Retail and Forever symlinks still resolve to this checkout, so the next UI load uses it. No saved variables or client configuration files were edited.
 
 ## Next client checks
 

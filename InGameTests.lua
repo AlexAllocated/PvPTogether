@@ -20,10 +20,13 @@ function PvPTogether:GetInGameTests()
 	cases[#cases + 1] = {
 		name = "PvPTogether: diagnostic counters stay on detached fixtures",
 		run = function()
-			local fixture = setmetatable(
-				{ diagnosticCounterStore = LibChev.NewCounters(), diagnosticLog = LibChev.NewLog() },
-				{ __index = PvPTogether }
-			)
+			local fixture = setmetatable({
+				diagnosticCounterStore = LibChev.NewCounters(),
+				diagnosticLog = LibChev.NewLog(),
+				GetDiagnosticTime = function()
+					return 0
+				end,
+			}, { __index = PvPTogether })
 			fixture:RecordDiagnostic("fixture-reason")
 			local snapshot = fixture:GetDiagnosticSnapshot()
 			LibChev.AssertEqual(#snapshot, 1)
