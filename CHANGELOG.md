@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0-beta.3 — 2026-09-24
+
+- Update the shared libchev console to native WoW dialog artwork and button textures while retaining addon-owned frames and restriction guards.
+- Show one test summary per run.
+- Supply a safe clock to the shared log formatter so events include timestamps and sequence numbers consistently. Unavailable, secret, or nonfinite clock values are omitted.
+- Keep detached self-tests independent of the native clock. Audit confirms the TOC-loaded tests contain no undefined arithmetic or generated NaN fixtures.
+
+Validation: 144 offline regressions pass in both orders under Lua 5.1.5 and 5.2.4. The user reported all 15 in-game checks passing on Forever 1.60.1 build 70009 with beta.2; beta.3 artwork and gameplay/taint behavior still require live validation. Reload and run `/pt test`, then check `/pt debug` and `/pt diagnostics`.
+
 ## 1.1.0-beta.2 — 2026-09-24
 
 - Use libchev 1.1.0's shared debug controller and console. Logging, filters, search, scrolling, test presentation, and debug commands now use the same implementation across consumers.

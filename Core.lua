@@ -591,6 +591,16 @@ function PvPTogether:GetDiagnosticVersion()
 	return addonVersion
 end
 
+function PvPTogether:GetDiagnosticTime()
+	local getTime = self:SafeGetField(_G, "GetTime")
+	if type(getTime) == "function" then
+		local ok, value = pcall(getTime)
+		if ok then
+			return LibChev.Number(value)
+		end
+	end
+end
+
 function PvPTogether:GetDiagnosticEnvironment()
 	return LibChev.ReadEnvironment({ GetBuildInfo = GetBuildInfo, GetLocale = GetLocale })
 end
@@ -657,6 +667,9 @@ function PvPTogether:GetDebugController()
 			self.diagnosticLog = store
 		end,
 		limits = { maxLines = 60, maxEntry = 100 },
+		clock = function()
+			return self:GetDiagnosticTime()
+		end,
 		getTests = function()
 			return self:GetInGameTests()
 		end,

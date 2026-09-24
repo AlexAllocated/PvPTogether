@@ -137,12 +137,14 @@ return function(H)
 		local report = window.TextBox:GetText()
 		H.truthy(window:IsShown())
 		H.truthy(report:find("addon=PvPTogether", 1, true))
-		H.truthy(report:find("library=libchev 1.1.0", 1, true))
+		H.truthy(report:find("library=libchev 1.1.1", 1, true))
 		H.truthy(report:find("suite=PvPTogether in-game tests", 1, true))
 		H.truthy(
 			report:find("Addon-owned isolated checks; live-client behavior requires separate validation.", 1, true)
 		)
 		H.truthy(report:find("15 passed, 0 failed (15 total)", 1, true))
+		local _, summaries = report:gsub("Test summary:", "")
+		H.equal(summaries, 1)
 		H.falsy(report:find("counter.", 1, true))
 		H.truthy(#report <= 32768)
 		env.SlashCmdList.PVPTOGETHER("test")
@@ -296,6 +298,50 @@ return function(H)
 		H.equal(addon:GetDiagnosticSnapshot()[1].reason, "live-reason")
 	end)
 
+	H.test("shared log formatter includes the accessible clock and sequence", function()
+		local addon, state = H.new()
+		state.now = 12.5
+		addon:RecordDiagnostic("clock-first")
+		state.now = 13.75
+		addon:RecordDiagnostic("clock-second")
+		local text = addon:GetDebugController():GetText()
+		H.truthy(text:find("[STATE] [12.500 #1] clock-first count=1", 1, true))
+		H.truthy(text:find("[STATE] [13.750 #2] clock-second count=1", 1, true))
+		H.truthy(addon:BuildDiagnosticExport():find("[STATE] [13.750 #2]", 1, true))
+	end)
+
+	H.test("diagnostic clock rejects unavailable secret and nonfinite values", function()
+		local addon, state, env = H.new()
+		for _, value in ipairs({ state:secretValue(), math.huge, -math.huge, "12", {} }) do
+			env.GetTime = function()
+				return value
+			end
+			H.equal(addon:GetDiagnosticTime(), nil)
+		end
+		env.GetTime = function()
+			error("FOREIGN_clock_failure")
+		end
+		addon:RecordDiagnostic("clock-unavailable")
+		H.equal(addon.diagnosticLog.entries[1].elapsed, nil)
+		H.falsy(addon:BuildDiagnosticExport():find("FOREIGN_", 1, true))
+		env.GetTime = nil
+		H.equal(addon:GetDiagnosticTime(), nil)
+	end)
+
+	H.test("pure in-game bodies never read the native clock", function()
+		local addon, _, env = H.new()
+		local calls = 0
+		env.GetTime = function()
+			calls = calls + 1
+			error("in-game self-test read native clock")
+		end
+		local ok, passed, failed = addon:RunTests()
+		H.truthy(ok)
+		H.equal(passed, 15)
+		H.equal(failed, 0)
+		H.equal(calls, 0)
+	end)
+
 	H.test("static diagnostic sampling keeps bounded log and exact counters", function()
 		local addon = H.new()
 		for _ = 1, 205 do
@@ -335,7 +381,7 @@ return function(H)
 		H.truthy(report:find("client.build=69933", 1, true))
 		H.truthy(report:find("counter.layout-unavailable=1", 1, true))
 		H.truthy(report:find("Recent events:", 1, true))
-		H.truthy(report:find("[STATE] layout-unavailable count=1", 1, true))
+		H.truthy(report:find("[STATE] [0.000 #1] layout-unavailable count=1", 1, true))
 		H.truthy(#report <= 32768)
 		H.equal(#state.mutations, 0)
 	end)

@@ -380,6 +380,12 @@ return function(root)
 		for _, name in ipairs({
 			"SetAtlas",
 			"SetTexture",
+			"SetHorizTile",
+			"SetVertTile",
+			"SetNormalTexture",
+			"SetPushedTexture",
+			"SetHighlightTexture",
+			"SetBlendMode",
 			"SetColorTexture",
 			"SetVertexColor",
 			"SetAlpha",
