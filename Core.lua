@@ -562,7 +562,7 @@ function PvPTogether:Print(message)
 	end
 end
 
--- Counters only: never retain foreign error text, unit tokens, GUIDs, or values.
+-- Static reasons only: never retain foreign error text, unit tokens, GUIDs, or values.
 -- Bound both the number of reasons and each count for long-running sessions.
 function PvPTogether:RecordDiagnostic(reason)
 	self.diagnosticCounterStore = self.diagnosticCounterStore or LibChev.NewCounters()
@@ -571,14 +571,7 @@ function PvPTogether:RecordDiagnostic(reason)
 	self.diagnosticReasonCount = self.diagnosticCounterStore.size
 	-- Sample only static reasons; preserve the established no-identity policy.
 	if count and (count <= 3 or count % 100 == 0) then
-		self.diagnosticLog = self.diagnosticLog or LibChev.NewLog()
-		LibChev.AppendLog(
-			self.diagnosticLog,
-			reason .. " count=" .. count,
-			"STATE",
-			nil,
-			{ maxLines = 60, maxEntry = 100 }
-		)
+		self:GetDebugController():Append(reason .. " count=" .. count, "STATE")
 	end
 end
 
@@ -586,7 +579,7 @@ function PvPTogether:GetDiagnosticSnapshot()
 	return LibChev.CounterSnapshot(self.diagnosticCounterStore or LibChev.NewCounters())
 end
 
-function PvPTogether:BuildDiagnostics()
+function PvPTogether:GetDiagnosticVersion()
 	local addonVersion = "unknown"
 	local getMetadata = self:SafeGetField(C_AddOns, "GetAddOnMetadata")
 	if type(getMetadata) == "function" then
@@ -595,8 +588,19 @@ function PvPTogether:BuildDiagnostics()
 			addonVersion = self:SafeToString(value, addonVersion)
 		end
 	end
-	local environment = LibChev.ReadEnvironment({ GetBuildInfo = GetBuildInfo, GetLocale = GetLocale })
-	local report = LibChev.DiagnosticReport("PvPTogether", addonVersion, environment)
+	return addonVersion
+end
+
+function PvPTogether:GetDiagnosticEnvironment()
+	return LibChev.ReadEnvironment({ GetBuildInfo = GetBuildInfo, GetLocale = GetLocale })
+end
+
+function PvPTogether:NewDiagnosticReport()
+	return LibChev.DiagnosticReport("PvPTogether", self:GetDiagnosticVersion(), self:GetDiagnosticEnvironment())
+end
+
+function PvPTogether:BuildDiagnostics()
+	local report = self:NewDiagnosticReport()
 	local function Add(label, value)
 		report:Add(label, value)
 	end
@@ -634,38 +638,75 @@ function PvPTogether:BuildDiagnostics()
 	for _, entry in ipairs(self:GetDiagnosticSnapshot()) do
 		Add("counter." .. entry.reason, entry.count)
 	end
-	Add("log.dropped", self.diagnosticLog and self.diagnosticLog.dropped or 0)
-	for index, entry in ipairs(self.diagnosticLog and self.diagnosticLog.entries or {}) do
-		Add("event." .. index, LibChev.FormatEntry(entry))
-	end
 	return report:Text()
 end
 
-function PvPTogether:PrintDiagnostics()
-	local report = self:BuildDiagnostics()
-	local opened, displayed = pcall(LibChev.OpenReportWindow, self, report, {
-		title = "PvPTogether Diagnostics",
-		parent = UIParent,
-		createFrame = CreateFrame,
-		restricted = function()
-			return not self.IsNameplateAugmentationBlockedInCurrentContext
-				or self:IsNameplateAugmentationBlockedInCurrentContext()
+-- All generic debug state and UI behavior belongs to the private library.
+-- Domain safety, counters, and the no-identity data policy stay in this addon.
+function PvPTogether:GetDebugController()
+	local controller = rawget(self, "debugController")
+	if controller then
+		return controller
+	end
+	controller = LibChev.NewDebugController({
+		addonName = "PvPTogether",
+		getLog = function()
+			return self.diagnosticLog or LibChev.NewLog()
 		end,
-		canMutate = function(region)
-			return LibChev.CanMutateOwnedRegion(region)
-				and type(self.CanMutateNameplateFrame) == "function"
-				and self:CanMutateNameplateFrame(region)
+		commitLog = function(store)
+			self.diagnosticLog = store
+		end,
+		limits = { maxLines = 60, maxEntry = 100 },
+		getTests = function()
+			return self:GetInGameTests()
+		end,
+		getVersion = function()
+			return self:GetDiagnosticVersion()
+		end,
+		getEnvironment = function()
+			return self:GetDiagnosticEnvironment()
+		end,
+		buildReport = function()
+			return self:BuildDiagnostics()
+		end,
+		print = function(text)
+			self:Print(text)
+		end,
+		reload = type(ReloadUI) == "function" and ReloadUI or nil,
+		failureDetails = false,
+		ui = {
+			parent = UIParent,
+			createFrame = function(...)
+				return CreateFrame(...)
+			end,
+			restricted = function()
+				return not self.IsNameplateAugmentationBlockedInCurrentContext
+					or self:IsNameplateAugmentationBlockedInCurrentContext()
+			end,
+			canMutate = function(region)
+				return LibChev.CanMutateOwnedRegion(region)
+					and type(self.CanMutateNameplateFrame) == "function"
+					and self:CanMutateNameplateFrame(region)
+			end,
+		},
+		onWindow = function(frame)
+			self.diagnosticsWindow = frame
 		end,
 	})
-	if opened and self:SafeToBoolean(displayed) == true then
-		return
-	end
-	if not opened then
-		self:RecordDiagnostic("report-window-unavailable")
-	end
-	for line in report:gmatch("[^\n]+") do
-		self:Print(line)
-	end
+	self.debugController = controller
+	return controller
+end
+
+function PvPTogether:BuildDiagnosticExport()
+	return self:GetDebugController():BuildDiagnosticExport()
+end
+
+function PvPTogether:ShowDiagnosticReport(report)
+	return self:GetDebugController():ShowReport(report)
+end
+
+function PvPTogether:PrintDiagnostics()
+	return self:GetDebugController():ShowDiagnostics()
 end
 
 function PvPTogether:RegisterSlashCommands()
@@ -677,16 +718,10 @@ function PvPTogether:RegisterSlashCommands()
 	SLASH_PVPTOGETHER2 = "/pvptogether"
 	SlashCmdList.PVPTOGETHER = function(message)
 		local command = self:SafeToString(message, "")
+		if self:GetDebugController():HandleCommand(command) then
+			return
+		end
 		command = command:lower():gsub("^%s+", ""):gsub("%s+$", "")
-
-		if command == "test" then
-			self:RunTests()
-			return
-		end
-		if command == "diagnostics" or command == "diag" then
-			self:PrintDiagnostics()
-			return
-		end
 		if command == "on" then
 			self:SetOption("enabled", true)
 			self:Print("Enabled.")
@@ -703,7 +738,7 @@ function PvPTogether:RegisterSlashCommands()
 			return
 		end
 		if not self:OpenOptionsWindow() then
-			self:Print("Use /pt on, /pt off, /pt toggle, /pt diagnostics, or /pt test.")
+			self:Print("Use /pt on, /pt off, /pt toggle, /pt debug, /pt dump, /pt diagnostics, or /pt test.")
 		end
 	end
 

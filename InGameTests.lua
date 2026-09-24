@@ -33,13 +33,8 @@ function PvPTogether:GetInGameTests()
 	return cases
 end
 
-function PvPTogether:RunTests()
-	local result = LibChev.RunTests(self:GetInGameTests(), {
-		onFailure = function(failure)
-			self:Print("[FAIL] " .. failure.name .. " (error details omitted; run offline tests for debugging)")
-		end,
-	})
-	self:Print(LibChev.TestSummary(result))
-	self:Print("In-game checks use private values; nameplate simulations run offline.")
-	return result.failed == 0, result.passed, result.failed
+-- Compatibility entry point: shared execution stays headless unless requested.
+function PvPTogether:RunTests(showReport)
+	local success, passed, failed = self:GetDebugController():RunTests(false, showReport == true)
+	return success, passed, failed
 end

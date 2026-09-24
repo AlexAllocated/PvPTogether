@@ -29,3 +29,5 @@ Preserve existing user work and SavedVariables. Do not overwrite or delete saves
 ## Shared library
 
 Embed libchev only through its `scripts/vendor.py` from an exact validated commit. The loader contract is `namespace.LibChev`; each addon receives an independent instance under `Libs/libchev`. Never edit embedded library files, create a global registry, or retain the provisional `namespace.Together` alias. Keep nameplate access, restriction, identity, and lifecycle policies in this addon. Preserve the no-identity diagnostics policy and bounded static-reason sampling.
+
+Use `LibChev.NewDebugController` for debug commands, log/filter/search operations, test presentation, diagnostic exports, and the console. Supply only private data, domain reports/tests, and safety policies from PvPTogether; do not recreate generic debug mechanics or UI locally. Keep `failureDetails = false`. Resolve cached controllers with `rawget` so detached fixtures cannot inherit the live addon controller.

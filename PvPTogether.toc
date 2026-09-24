@@ -2,12 +2,14 @@
 ## Interface-Mainline: 120100
 ## Interface-Camelot: 16001
 ## Title: PvPTogether
-## Version: 1.1.0-beta.1
+## Version: 1.1.0-beta.2
 ## Notes: Per-unit-type Blizzard nameplate geometry and border tint.
 ## SavedVariablesPerCharacter: PvPTogetherDBChar
 ## Author: Chev
 
 Libs/libchev/libchev.lua
+Libs/libchev/Debug.lua
+Libs/libchev/DebugWindow.lua
 Libs/libchev/ReportWindow.lua
 Libs/libchev/SelfTests.lua
 Core.lua

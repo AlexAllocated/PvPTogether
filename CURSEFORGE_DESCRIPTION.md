@@ -5,8 +5,9 @@ PvPTogether adds per-category bar/name geometry and optional border tint to Bliz
 Open **Options → AddOns → PvPTogether** or use `/pt`. Each category offers six geometry choices, an **Inherit From Global** option, a border toggle, a color picker, and a reset button. Settings are saved per character in `PvPTogetherDBChar`.
 
 - `/pt on`, `/pt off`, `/pt toggle` control the addon.
+- `/pt debug` or `/pt dump` opens the shared debug console with category filtering, fuzzy or quoted search, tail scrolling, copy, clear, test, diagnostics, and reload controls. `/pt dump clear` clears history; `/pt dump STATE` filters state events.
 - `/pt diagnostics` opens a copyable build/capability/settings report with bounded diagnostic counters and sampled static reasons. Restricted or unavailable UI falls back to chat.
-- `/pt test` runs twelve checks on detached private values. It does not exercise live nameplates or certify taint safety.
+- `/pt test` runs fifteen checks on detached private values and opens current results in the same debug console, with chat fallback when the window is unavailable. It does not exercise live nameplates or certify taint safety.
 - `/pvptogether` is an alias for `/pt`.
 
 The current local beta targets Retail 12.1 and the Forever 1.60.1 beta. Forever uses modern nameplate APIs and restrictions. Live-client validation is still required; interface metadata alone is not proof of compatibility.
