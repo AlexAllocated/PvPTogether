@@ -586,7 +586,7 @@ function PvPTogether:GetDiagnosticSnapshot()
 	return LibChev.CounterSnapshot(self.diagnosticCounterStore or LibChev.NewCounters())
 end
 
-function PvPTogether:BuildDiagnostics()
+function PvPTogether:NewDiagnosticReport()
 	local addonVersion = "unknown"
 	local getMetadata = self:SafeGetField(C_AddOns, "GetAddOnMetadata")
 	if type(getMetadata) == "function" then
@@ -596,7 +596,11 @@ function PvPTogether:BuildDiagnostics()
 		end
 	end
 	local environment = LibChev.ReadEnvironment({ GetBuildInfo = GetBuildInfo, GetLocale = GetLocale })
-	local report = LibChev.DiagnosticReport("PvPTogether", addonVersion, environment)
+	return LibChev.DiagnosticReport("PvPTogether", addonVersion, environment)
+end
+
+function PvPTogether:BuildDiagnostics()
+	local report = self:NewDiagnosticReport()
 	local function Add(label, value)
 		report:Add(label, value)
 	end
@@ -641,8 +645,7 @@ function PvPTogether:BuildDiagnostics()
 	return report:Text()
 end
 
-function PvPTogether:PrintDiagnostics()
-	local report = self:BuildDiagnostics()
+function PvPTogether:ShowDiagnosticReport(report)
 	local opened, displayed = pcall(LibChev.OpenReportWindow, self, report, {
 		title = "PvPTogether Diagnostics",
 		parent = UIParent,
@@ -668,6 +671,10 @@ function PvPTogether:PrintDiagnostics()
 	end
 end
 
+function PvPTogether:PrintDiagnostics()
+	self:ShowDiagnosticReport(self:BuildDiagnostics())
+end
+
 function PvPTogether:RegisterSlashCommands()
 	if self.slashCommandsRegistered then
 		return
@@ -680,7 +687,7 @@ function PvPTogether:RegisterSlashCommands()
 		command = command:lower():gsub("^%s+", ""):gsub("%s+$", "")
 
 		if command == "test" then
-			self:RunTests()
+			self:RunTests(true)
 			return
 		end
 		if command == "diagnostics" or command == "diag" then

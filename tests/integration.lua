@@ -100,15 +100,98 @@ return function(H)
 		H.equal(addon.diagnosticLog, nil)
 	end)
 
-	H.test("slash test dispatch runs only the pure live suite", function()
+	local function FailSuite(addon)
+		addon.GetInGameTests = function()
+			return {
+				{
+					name = "private failure check",
+					run = function()
+						error("FOREIGN_PlayerName_Player-GUID_nameplate1")
+					end,
+				},
+			}
+		end
+	end
+
+	H.test("slash test opens current results and reuses the diagnostic window", function()
 		local addon, state, env = H.new()
 		addon:RegisterSlashCommands()
-		local frameCount = #state.frames
+		addon:PrintDiagnostics()
+		local window = assert(addon.diagnosticsWindow)
+		local db, frameCount, hookCount, timerCount = addon.db, #state.frames, #state.hooks, #state.timers
 		env.SlashCmdList.PVPTOGETHER(" test ")
-		H.truthy(Messages(state):find("12 passed, 0 failed", 1, true))
+		local report = window.TextBox:GetText()
+		H.truthy(window:IsShown())
+		H.truthy(report:find("addon=PvPTogether", 1, true))
+		H.truthy(report:find("library=libchev 1.0.0", 1, true))
+		H.truthy(report:find("suite=PvPTogether in-game self-tests", 1, true))
+		H.truthy(report:find("private values; nameplate simulations run offline", 1, true))
+		H.truthy(report:find("12 passed, 0 failed (12 total)", 1, true))
+		H.falsy(report:find("counter.", 1, true))
+		H.truthy(#report <= 32768)
+		env.SlashCmdList.PVPTOGETHER("test")
+		H.equal(addon.diagnosticsWindow, window)
 		H.equal(#state.frames, frameCount)
-		H.equal(#state.mutations, 0)
+		H.equal(#state.hooks, hookCount)
+		H.equal(#state.timers, timerCount)
+		H.equal(addon.db, db)
+		H.equal(addon.diagnosticLog, nil)
+		H.equal(state.foreignWrites, 0)
+		H.equal(#state.messages, 0)
 	end)
+
+	H.test("slash test opens a fresh window and replaces failures on the next run", function()
+		local addon, state, env = H.new()
+		addon:RegisterSlashCommands()
+		local original = addon.GetInGameTests
+		FailSuite(addon)
+		env.SlashCmdList.PVPTOGETHER("test")
+		local window = assert(addon.diagnosticsWindow)
+		local report = window.TextBox:GetText()
+		H.truthy(report:find("0 passed, 1 failed (1 total)", 1, true))
+		H.truthy(report:find("[FAIL] private failure check", 1, true))
+		H.truthy(report:find("error details omitted", 1, true))
+		H.falsy(report:find("FOREIGN_", 1, true))
+		H.falsy(Messages(state):find("FOREIGN_", 1, true))
+		addon.GetInGameTests = original
+		env.SlashCmdList.PVPTOGETHER("test")
+		H.equal(addon.diagnosticsWindow, window)
+		H.truthy(window.TextBox:GetText():find("12 passed, 0 failed", 1, true))
+		H.falsy(window.TextBox:GetText():find("[FAIL]", 1, true))
+	end)
+
+	for _, scenario in ipairs({ "restricted", "native permission", "missing UI", "throwing UI" }) do
+		local mode = scenario
+		H.test("slash test reports safe failures in chat with " .. mode, function()
+			local addon, state, env = H.new()
+			addon:RegisterSlashCommands()
+			FailSuite(addon)
+			if mode == "restricted" then
+				state.restricted[env.Enum.AddOnRestrictionType.PvPMatch] = env.Enum.AddOnRestrictionState.Active
+			elseif mode == "native permission" then
+				state.allowProtectedFunctions = false
+			elseif mode == "missing UI" then
+				env.CreateFrame = nil
+			else
+				env.CreateFrame = function()
+					error("FOREIGN_UI_FAILURE")
+				end
+			end
+			local frameCount = #state.frames
+			env.SlashCmdList.PVPTOGETHER("test")
+			local report = Messages(state)
+			H.truthy(report:find("addon=PvPTogether", 1, true))
+			H.truthy(report:find("0 passed, 1 failed (1 total)", 1, true))
+			H.truthy(report:find("[FAIL] private failure check", 1, true))
+			H.falsy(report:find("FOREIGN_", 1, true))
+			H.equal(addon.diagnosticsWindow, nil)
+			H.equal(#state.mutations, 0)
+			if mode ~= "native permission" then
+				H.equal(#state.frames, frameCount)
+			end
+			H.falsy(addon:BuildDiagnostics():find("FOREIGN_", 1, true))
+		end)
+	end
 
 	H.test("static diagnostic sampling keeps bounded log and exact counters", function()
 		local addon = H.new()

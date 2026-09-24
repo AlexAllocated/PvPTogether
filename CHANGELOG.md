@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0-beta.2 — 2026-09-24
+
+- Fix `/pt test` to open its current results in the copyable diagnostic window, with addon/library headers, suite purpose, summary, and static failure labels.
+- Reuse the existing window and replace earlier results on every run. Restricted, unavailable, or failing UI falls back to chat. Both output paths omit raw foreign errors.
+- Keep programmatic `RunTests()` headless by default, with unchanged return values and detached test bodies.
+
+Validation: 134 offline tests pass in normal and reverse order under Lua 5.1.5 and 5.2.4. Syntax, formatting, vendor hashes, and runtime ZIP checks pass. Real Retail/Forever window interaction, combat, and taint behavior remain unverified. Reload and run `/pt test` to see the report with 12 passed, then `/pt diagnostics` to switch back to general diagnostics.
+
 ## 1.1.0-beta.1 — 2026-09-24
 
 - Support current Retail and Forever nameplate layouts, including modern cast-bar containers.
