@@ -33,30 +33,8 @@ function PvPTogether:GetInGameTests()
 	return cases
 end
 
--- Presentation is explicit: programmatic callers stay headless by default.
+-- Compatibility entry point: shared execution stays headless unless requested.
 function PvPTogether:RunTests(showReport)
-	local result = LibChev.RunTests(self:GetInGameTests())
-	local purpose = "In-game checks use private values; nameplate simulations run offline."
-	local report = showReport == true and self:NewDiagnosticReport() or nil
-	if report then
-		report:Add("suite", "PvPTogether in-game self-tests")
-		report:Add("purpose", purpose)
-		report:Add("summary", LibChev.TestSummary(result))
-	end
-	for index, failure in ipairs(result.failures) do
-		-- Names come from our static registrations. Never include failure.error.
-		local line = "[FAIL] " .. failure.name .. " (error details omitted; run offline tests for debugging)"
-		if report then
-			report:Add("failure." .. index, line)
-		else
-			self:Print(line)
-		end
-	end
-	if report then
-		self:ShowDiagnosticReport(report:Text())
-	else
-		self:Print(LibChev.TestSummary(result))
-		self:Print(purpose)
-	end
-	return result.failed == 0, result.passed, result.failed
+	local success, passed, failed = self:GetDebugController():RunTests(false, showReport == true)
+	return success, passed, failed
 end

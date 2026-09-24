@@ -2,11 +2,14 @@
 
 ## 1.1.0-beta.2 — 2026-09-24
 
-- Fix `/pt test` to open its current results in the copyable diagnostic window, with addon/library headers, suite purpose, summary, and static failure labels.
-- Reuse the existing window and replace earlier results on every run. Restricted, unavailable, or failing UI falls back to chat. Both output paths omit raw foreign errors.
-- Keep programmatic `RunTests()` headless by default, with unchanged return values and detached test bodies.
+- Use libchev 1.1.0's shared debug controller and console. Logging, filters, search, scrolling, test presentation, and debug commands now use the same implementation across consumers.
+- Fix `/pt test` to open current test results in that console, including addon/library headers, suite purpose, summary, and static failure labels. Previous TEST results are replaced each run.
+- Add `/pt debug`, `/pt dump`, `/pt dump CATEGORY`, and `/pt dump clear`, plus console controls for tests, diagnostics, copying, clearing, and reloading.
+- Preserve chat fallback when UI is restricted or unavailable, detached programmatic tests, bounded static-reason history, and the policy excluding raw foreign errors and unit identity.
 
-Validation: 134 offline tests pass in normal and reverse order under Lua 5.1.5 and 5.2.4. Syntax, formatting, vendor hashes, and runtime ZIP checks pass. Real Retail/Forever window interaction, combat, and taint behavior remain unverified. Reload and run `/pt test` to see the report with 12 passed, then `/pt diagnostics` to switch back to general diagnostics.
+Validation: 141 offline regressions pass in normal and reverse order under Lua 5.1.5 and 5.2.4. The exact embedded revision is `1f2cd0eaabb692fd0befd51dbdadeb7e07beb3c6`. Runtime ZIP contents and vendor hashes are verified.
+
+Real Retail/Forever window interaction, combat, and taint behavior remain unverified. Reload and run `/pt test` to see 15 passed, then `/pt diagnostics` to switch to the addon report. Use `/pt debug` to return to event history.
 
 ## 1.1.0-beta.1 — 2026-09-24
 

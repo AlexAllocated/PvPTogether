@@ -8,6 +8,8 @@
 ## Author: Chev
 
 Libs/libchev/libchev.lua
+Libs/libchev/Debug.lua
+Libs/libchev/DebugWindow.lua
 Libs/libchev/ReportWindow.lua
 Libs/libchev/SelfTests.lua
 Core.lua

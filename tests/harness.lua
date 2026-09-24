@@ -407,6 +407,18 @@ return function(root)
 			"SetAutoFocus",
 			"SetTextInsets",
 			"HighlightText",
+			"SetMovable",
+			"SetResizable",
+			"SetResizeBounds",
+			"RegisterForDrag",
+			"SetMaxLetters",
+			"SetOrientation",
+			"SetValueStep",
+			"SetThumbTexture",
+			"StartMoving",
+			"StartSizing",
+			"StopMovingOrSizing",
+			"Raise",
 		}) do
 			local method = name
 			frameMethods[method] = function(self, ...)
@@ -756,6 +768,8 @@ return function(root)
 			options.configure(env, state)
 		end
 		state:load("Libs/libchev/libchev.lua")
+		state:load("Libs/libchev/Debug.lua")
+		state:load("Libs/libchev/DebugWindow.lua")
 		state:load("Libs/libchev/ReportWindow.lua")
 		state:load("Libs/libchev/SelfTests.lua")
 		state:load("Core.lua")
