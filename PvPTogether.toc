@@ -2,7 +2,7 @@
 ## Interface-Mainline: 120100
 ## Interface-Camelot: 16001
 ## Title: PvPTogether
-## Version: 1.0.8-beta.1
+## Version: 1.1.0-beta.1
 ## Notes: Per-unit-type Blizzard nameplate geometry and border tint.
 ## SavedVariablesPerCharacter: PvPTogetherDBChar
 ## Author: Chev

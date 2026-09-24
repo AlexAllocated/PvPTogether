@@ -10,7 +10,7 @@ Each addon loader gets its own `namespace.LibChev`. PvPTogether captures that pr
 - Restricted or unavailable report UI falls back to chat. Region mutation requires both the library's owned-region checks and PvPTogether's native permission checks. Callbacks recheck restrictions; window-construction failures are contained without printing the foreign exception.
 - `/pt test` runs **12 detached checks**: 10 shared self-tests plus 2 addon checks. It does not replace engine APIs, create nameplates, reset runtime stores, or modify saved settings. Failure output contains static test labels and a summary, not raw foreign error payloads. The standalone offline runner executes these same bodies too.
 
-The addon version remains **1.0.8-beta.1**. This integration does not create an addon release tag or publish an addon package. The prior [Retail/Forever audit](AUDIT_2026-09-24.md) and its live-validation limits still apply.
+The release candidate is **1.1.0-beta.1**, with [release notes](CHANGELOG.md). Publication uses the existing annotated-tag convention and a GitHub prerelease. The prior [Retail/Forever audit](AUDIT_2026-09-24.md) and its live-validation limits still apply.
 
 ## Verified results
 
