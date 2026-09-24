@@ -4,6 +4,8 @@ local PvPTogether = _G.PvPTogether or addonTable or {}
 _G.PvPTogether = PvPTogether
 
 local raw_issecretvalue = type(issecretvalue) == "function" and issecretvalue or nil
+local raw_canaccessvalue = type(canaccessvalue) == "function" and canaccessvalue or nil
+local raw_canaccesstable = type(canaccesstable) == "function" and canaccesstable or nil
 
 PvPTogether.addonName = addonName or "PvPTogether"
 
@@ -13,6 +15,7 @@ local STYLE_BLOCK = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Block o
 local STYLE_HEALTH_FOCUS = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.HealthFocus or 3
 local STYLE_CAST_FOCUS = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.CastFocus or 4
 local STYLE_LEGACY = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Legacy or 5
+local STYLE_CLASSIC = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Classic
 
 PvPTogether.nameplateStyleOrder = {
 	STYLE_MODERN,
@@ -31,6 +34,9 @@ PvPTogether.nameplateStyleLabels = {
 	[STYLE_CAST_FOCUS] = UNIT_NAMEPLATES_STYLE_CAST_FOCUS or "Cast Focus",
 	[STYLE_LEGACY] = UNIT_NAMEPLATES_STYLE_LEGACY or "Legacy",
 }
+if STYLE_CLASSIC then
+	PvPTogether.nameplateStyleLabels[STYLE_CLASSIC] = UNIT_NAMEPLATES_STYLE_CLASSIC or "Classic"
+end
 
 PvPTogether.DEFAULTS = {
 	enabled = true,
@@ -60,11 +66,10 @@ PvPTogether.isInitialized = PvPTogether.isInitialized or false
 PvPTogether.hasLoggedIn = PvPTogether.hasLoggedIn or false
 PvPTogether.isEnabled = PvPTogether.isEnabled or false
 PvPTogether.db = PvPTogether.db or nil
-PvPTogether.trackedNamePlateFrames = PvPTogether.trackedNamePlateFrames
-	or setmetatable({}, { __mode = "k" })
+PvPTogether.trackedNamePlateFrames = PvPTogether.trackedNamePlateFrames or setmetatable({}, { __mode = "k" })
 
 local function IsNonEmptyString(value)
-	return type(value) == "string" and value ~= ""
+	return type(value) == "string" and PvPTogether:CanAccessValue(value) and value ~= ""
 end
 
 local function ClampColorComponent(value, fallback)
@@ -82,14 +87,18 @@ local function ClampColorComponent(value, fallback)
 end
 
 local function ColorsNearlyEqual(left, right)
-	return math.abs((left or 0) - (right or 0)) < 0.001
+	local leftNumber = PvPTogether:SafeToNumber(left)
+	local rightNumber = PvPTogether:SafeToNumber(right)
+	return leftNumber ~= nil and rightNumber ~= nil and math.abs(leftNumber - rightNumber) < 0.001
 end
 
 local function ColorTablesEqual(left, right)
-	if type(left) ~= "table" or type(right) ~= "table" then
+	if not PvPTogether:CanAccessTable(left) or not PvPTogether:CanAccessTable(right) then
 		return false
 	end
-	return ColorsNearlyEqual(left.r, right.r) and ColorsNearlyEqual(left.g, right.g) and ColorsNearlyEqual(left.b, right.b)
+	return ColorsNearlyEqual(PvPTogether:SafeGetField(left, "r"), PvPTogether:SafeGetField(right, "r"))
+		and ColorsNearlyEqual(PvPTogether:SafeGetField(left, "g"), PvPTogether:SafeGetField(right, "g"))
+		and ColorsNearlyEqual(PvPTogether:SafeGetField(left, "b"), PvPTogether:SafeGetField(right, "b"))
 end
 
 function PvPTogether:IsSecretValue(value)
@@ -97,32 +106,98 @@ function PvPTogether:IsSecretValue(value)
 		return false
 	end
 	local ok, isSecret = pcall(raw_issecretvalue, value)
-	return ok and isSecret and true or false
+	return not ok or isSecret ~= false
+end
+
+function PvPTogether:CanAccessValue(value)
+	if self:IsSecretValue(value) then
+		return false
+	end
+	if raw_canaccessvalue then
+		local ok, accessible = pcall(raw_canaccessvalue, value)
+		if not ok or accessible ~= true then
+			return false
+		end
+	end
+	return true
+end
+
+function PvPTogether:CanAccessTable(value)
+	if type(value) ~= "table" or not self:CanAccessValue(value) then
+		return false
+	end
+	if raw_canaccesstable then
+		local ok, accessible = pcall(raw_canaccesstable, value)
+		if not ok or accessible ~= true then
+			return false
+		end
+	end
+	return true
+end
+
+-- Contain access failures without treating pcall as a taint boundary. Callers
+-- must still reject forbidden frames before reading any other frame members.
+function PvPTogether:SafeGetField(object, key)
+	if not self:CanAccessValue(object) or not self:CanAccessValue(key) then
+		return nil, false
+	end
+	local objectType = type(object)
+	if
+		(objectType ~= "table" and objectType ~= "userdata")
+		or (objectType == "table" and not self:CanAccessTable(object))
+	then
+		return nil, false
+	end
+	local ok, value = pcall(function()
+		return object[key]
+	end)
+	if not ok or not self:CanAccessValue(value) then
+		return nil, false
+	end
+	return value, true
+end
+
+function PvPTogether:SafeToBoolean(value)
+	if not self:CanAccessValue(value) or type(value) ~= "boolean" then
+		return nil
+	end
+	return value
 end
 
 function PvPTogether:SafeToNumber(value)
-	if self:IsSecretValue(value) then
+	if not self:CanAccessValue(value) or (type(value) ~= "number" and type(value) ~= "string") then
 		return nil
 	end
 	local ok, numericValue = pcall(tonumber, value)
 	if not ok then
 		return nil
 	end
-	if type(numericValue) ~= "number" then
+	if
+		type(numericValue) ~= "number"
+		or not self:CanAccessValue(numericValue)
+		or numericValue ~= numericValue
+		or numericValue == math.huge
+		or numericValue == -math.huge
+	then
 		return nil
 	end
 	return numericValue
 end
 
 function PvPTogether:SafeToString(value, fallback)
-	if self:IsSecretValue(value) then
-		return fallback or ""
+	local safeFallback = type(fallback) == "string" and self:CanAccessValue(fallback) and fallback or ""
+	if not self:CanAccessValue(value) then
+		return safeFallback
 	end
-	local ok, textValue = pcall(tostring, value)
-	if not ok then
-		return fallback or ""
+	local valueType = type(value)
+	if valueType == "string" then
+		return value
 	end
-	return textValue
+	if valueType == "number" or valueType == "boolean" then
+		return tostring(value)
+	end
+	-- Do not invoke foreign __tostring metamethods from diagnostic paths.
+	return safeFallback
 end
 
 function PvPTogether:DeepCopy(value)
@@ -154,21 +229,28 @@ function PvPTogether:ApplyDefaults(destination, defaults)
 end
 
 function PvPTogether:IsInCombatLockdown()
+	if not self:CanAccessValue(InCombatLockdown) then
+		return true
+	end
 	if type(InCombatLockdown) ~= "function" then
-		return false
+		return InCombatLockdown ~= nil
 	end
 
 	local ok, inCombat = pcall(InCombatLockdown)
-	return ok and inCombat and true or false
+	if not ok or not self:CanAccessValue(inCombat) then
+		return true
+	end
+	-- Older clients may return nil outside combat.
+	return inCombat ~= nil and inCombat ~= false
 end
 
 function PvPTogether:GetCurrentGlobalNameplateStyle()
 	if C_CVar and type(C_CVar.GetCVar) == "function" then
-		local rawValue = C_CVar.GetCVar("nameplateStyle")
-		local numericStyle = self:SafeToNumber(rawValue)
+		local ok, rawValue = pcall(C_CVar.GetCVar, "nameplateStyle")
+		local numericStyle = ok and self:SafeToNumber(rawValue) or nil
 		if numericStyle then
 			numericStyle = math.floor(numericStyle + 0.5)
-			if self:IsNameplateStyle(numericStyle) then
+			if self:IsGlobalNameplateStyle(numericStyle) then
 				return numericStyle
 			end
 		end
@@ -193,19 +275,30 @@ function PvPTogether:IsNameplateStyle(value)
 	return false
 end
 
+function PvPTogether:IsGlobalNameplateStyle(value)
+	local numericStyle = self:SafeToNumber(value)
+	return numericStyle ~= nil
+		and (self:IsNameplateStyle(numericStyle) or (STYLE_CLASSIC ~= nil and numericStyle == STYLE_CLASSIC))
+end
+
 function PvPTogether:NormalizeNameplateStyle(value, fallbackStyle)
-	local fallback = fallbackStyle
-	if not self:IsNameplateStyle(fallback) then
+	local fallback = self:SafeToNumber(fallbackStyle)
+	if not self:IsGlobalNameplateStyle(fallback) then
 		fallback = STYLE_MODERN
 	end
+	fallback = math.floor(fallback + 0.5)
 
-	if not self:IsNameplateStyle(value) then
+	local numericStyle = self:SafeToNumber(value)
+	if not self:IsNameplateStyle(numericStyle) then
 		return fallback
 	end
-	return math.floor(value + 0.5)
+	return math.floor(numericStyle + 0.5)
 end
 
 function PvPTogether:GetNameplateStyleLabel(styleValue)
+	if STYLE_CLASSIC ~= nil and self:SafeToNumber(styleValue) == STYLE_CLASSIC then
+		return self.nameplateStyleLabels[STYLE_CLASSIC]
+	end
 	local normalizedStyle = self:NormalizeNameplateStyle(styleValue, STYLE_MODERN)
 	return self.nameplateStyleLabels[normalizedStyle] or ("Style " .. self:SafeToString(normalizedStyle, "?"))
 end
@@ -258,24 +351,19 @@ function PvPTogether:GetDefaultBorderColorForUnitKind(unitKind)
 end
 
 function PvPTogether:NormalizeColorRGB(colorValue, fallbackColor)
-	local fallback = type(fallbackColor) == "table" and fallbackColor or {
-		r = 1.0,
-		g = 1.0,
-		b = 1.0,
-	}
-
-	if type(colorValue) ~= "table" then
-		return {
-			r = fallback.r,
-			g = fallback.g,
-			b = fallback.b,
-		}
-	end
-
 	return {
-		r = ClampColorComponent(colorValue.r, fallback.r),
-		g = ClampColorComponent(colorValue.g, fallback.g),
-		b = ClampColorComponent(colorValue.b, fallback.b),
+		r = ClampColorComponent(
+			self:SafeGetField(colorValue, "r"),
+			ClampColorComponent(self:SafeGetField(fallbackColor, "r"), 1)
+		),
+		g = ClampColorComponent(
+			self:SafeGetField(colorValue, "g"),
+			ClampColorComponent(self:SafeGetField(fallbackColor, "g"), 1)
+		),
+		b = ClampColorComponent(
+			self:SafeGetField(colorValue, "b"),
+			ClampColorComponent(self:SafeGetField(fallbackColor, "b"), 1)
+		),
 	}
 end
 
@@ -306,6 +394,11 @@ function PvPTogether:InitializeDatabase()
 
 	if self.db.styleSeeded ~= true then
 		local globalStyle = self:GetCurrentGlobalNameplateStyle()
+		-- Classic is a native-only global mode, not a per-type override. Keep
+		-- inheritance instead of persisting a style the selectors cannot offer.
+		if not self:IsNameplateStyle(globalStyle) then
+			globalStyle = nil
+		end
 		if self.db.partyMemberStyle == nil then
 			self.db.partyMemberStyle = globalStyle
 		end
@@ -320,24 +413,29 @@ function PvPTogether:InitializeDatabase()
 
 	if self.db.partyMemberStyleSeeded ~= true then
 		if self.db.partyMemberStyle == nil and self:IsNameplateStyle(self.db.friendlyPlayerStyle) then
-			local fallbackGroupStyle = self:NormalizeNameplateStyle(
-				self.db.friendlyPlayerStyle,
-				self:GetCurrentGlobalNameplateStyle()
-			)
+			local fallbackGroupStyle =
+				self:NormalizeNameplateStyle(self.db.friendlyPlayerStyle, self:GetCurrentGlobalNameplateStyle())
 			self.db.partyMemberStyle = fallbackGroupStyle
 		end
 		self.db.partyMemberStyleSeeded = true
 	end
 
 	local fallbackStyle = self:GetCurrentGlobalNameplateStyle()
+	local function NormalizeStoredStyle(value)
+		if self:IsGlobalNameplateStyle(value) and not self:IsNameplateStyle(value) then
+			return nil
+		end
+		local normalizedStyle = self:NormalizeNameplateStyle(value, fallbackStyle)
+		return self:IsNameplateStyle(normalizedStyle) and normalizedStyle or nil
+	end
 	if self.db.partyMemberStyle ~= nil then
-		self.db.partyMemberStyle = self:NormalizeNameplateStyle(self.db.partyMemberStyle, fallbackStyle)
+		self.db.partyMemberStyle = NormalizeStoredStyle(self.db.partyMemberStyle)
 	end
 	if self.db.friendlyPlayerStyle ~= nil then
-		self.db.friendlyPlayerStyle = self:NormalizeNameplateStyle(self.db.friendlyPlayerStyle, fallbackStyle)
+		self.db.friendlyPlayerStyle = NormalizeStoredStyle(self.db.friendlyPlayerStyle)
 	end
 	if self.db.enemyPlayerStyle ~= nil then
-		self.db.enemyPlayerStyle = self:NormalizeNameplateStyle(self.db.enemyPlayerStyle, fallbackStyle)
+		self.db.enemyPlayerStyle = NormalizeStoredStyle(self.db.enemyPlayerStyle)
 	end
 	self.db.partyMemberBorderEnabled = self.db.partyMemberBorderEnabled == true
 	self.db.friendlyPlayerBorderEnabled = self.db.friendlyPlayerBorderEnabled == true
@@ -359,30 +457,35 @@ function PvPTogether:GetOption(optionKey)
 end
 
 function PvPTogether:SetOption(optionKey, value)
-	if not self.db or not IsNonEmptyString(optionKey) then
+	if not self.db or not IsNonEmptyString(optionKey) or not self:CanAccessValue(value) then
 		return false
 	end
 
 	local normalizedValue = value
 	if optionKey == "enabled" then
-		normalizedValue = value and true or false
-	elseif
-		optionKey == "partyMemberStyle"
-		or optionKey == "friendlyPlayerStyle"
-		or optionKey == "enemyPlayerStyle"
-	then
+		normalizedValue = self:SafeToBoolean(value)
+		if normalizedValue == nil then
+			return false
+		end
+	elseif optionKey == "partyMemberStyle" or optionKey == "friendlyPlayerStyle" or optionKey == "enemyPlayerStyle" then
 		if value == nil then
 			normalizedValue = nil
 		else
 			local fallbackStyle = self:GetCurrentGlobalNameplateStyle()
 			normalizedValue = self:NormalizeNameplateStyle(value, fallbackStyle)
+			if not self:IsNameplateStyle(normalizedValue) then
+				normalizedValue = nil
+			end
 		end
 	elseif
 		optionKey == "partyMemberBorderEnabled"
 		or optionKey == "friendlyPlayerBorderEnabled"
 		or optionKey == "enemyPlayerBorderEnabled"
 	then
-		normalizedValue = value and true or false
+		normalizedValue = self:SafeToBoolean(value)
+		if normalizedValue == nil then
+			return false
+		end
 	elseif optionKey == "partyMemberBorderColor" then
 		normalizedValue = self:NormalizeColorRGB(value, self.DEFAULTS.partyMemberBorderColor)
 	elseif optionKey == "friendlyPlayerBorderColor" then
@@ -406,6 +509,11 @@ function PvPTogether:SetOption(optionKey, value)
 	else
 		self.db[optionKey] = normalizedValue
 	end
+	if normalizedValue == false and optionKey ~= "enabled" and self.InvalidateOptionsCallbacks then
+		-- A picker opened for a border that was then disabled must not revive
+		-- when the border is re-enabled, or cancel back over a later setting.
+		self:InvalidateOptionsCallbacks()
+	end
 
 	if optionKey == "enabled" then
 		if normalizedValue then
@@ -413,11 +521,16 @@ function PvPTogether:SetOption(optionKey, value)
 		else
 			self:Disable()
 		end
-	elseif self.isEnabled and self.ReapplyAllNameplateStyles then
-		self:ReapplyAllNameplateStyles("option:" .. optionKey)
+	elseif self.isEnabled then
+		-- Coalesce slider/picker updates and let the module enforce restrictions.
 		if self.ScheduleReapplyAllNameplateStyles then
 			self:ScheduleReapplyAllNameplateStyles(0.02)
+		elseif self.ReapplyAllNameplateStyles then
+			self:ReapplyAllNameplateStyles("option:" .. optionKey)
 		end
+	end
+	if self.RefreshOptionsWindow and self.optionsFrame then
+		self:RefreshOptionsWindow()
 	end
 
 	return true
@@ -425,11 +538,161 @@ end
 
 function PvPTogether:Print(message)
 	local text = "|cff00ff98PvPTogether|r: " .. self:SafeToString(message, "")
-	if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
-		DEFAULT_CHAT_FRAME:AddMessage(text)
+	local chatFrame = DEFAULT_CHAT_FRAME
+	if not self:CanAccessValue(chatFrame) then
 		return
 	end
-	print("PvPTogether:", self:SafeToString(message, ""))
+	if chatFrame == nil then
+		pcall(print, text)
+		return
+	end
+	local isForbidden, readable = self:SafeGetField(chatFrame, "IsForbidden")
+	local allowed = readable
+	if type(isForbidden) == "function" then
+		local ok, forbidden = pcall(isForbidden, chatFrame)
+		allowed = ok and self:SafeToBoolean(forbidden) == false
+	end
+	if allowed then
+		local addMessage = self:SafeGetField(chatFrame, "AddMessage")
+		if type(addMessage) == "function" and pcall(addMessage, chatFrame, text) then
+			return
+		end
+	end
+end
+
+-- Counters only: never retain foreign error text, unit tokens, GUIDs, or values.
+-- Bound both the number of reasons and each count for long-running sessions.
+function PvPTogether:RecordDiagnostic(reason)
+	if
+		type(reason) ~= "string"
+		or not self:CanAccessValue(reason)
+		or #reason > 48
+		or not reason:match("^[%w_%-]+$")
+	then
+		return
+	end
+	self.diagnosticCounts = self.diagnosticCounts or {}
+	self.diagnosticReasonCount = self.diagnosticReasonCount or 0
+	if self.diagnosticCounts[reason] == nil then
+		if self.diagnosticReasonCount >= 24 then
+			return
+		end
+		self.diagnosticReasonCount = self.diagnosticReasonCount + 1
+	end
+	self.diagnosticCounts[reason] = math.min(99999, (self.diagnosticCounts[reason] or 0) + 1)
+end
+
+function PvPTogether:GetDiagnosticSnapshot()
+	local snapshot = {}
+	for reason, count in pairs(self.diagnosticCounts or {}) do
+		snapshot[#snapshot + 1] = { reason = reason, count = count }
+	end
+	table.sort(snapshot, function(left, right)
+		return left.reason < right.reason
+	end)
+	return snapshot
+end
+
+function PvPTogether:PrintDiagnostics()
+	local addonVersion = "unknown"
+	local getMetadata = self:SafeGetField(C_AddOns, "GetAddOnMetadata")
+	if type(getMetadata) == "function" then
+		local ok, value = pcall(getMetadata, self.addonName, "Version")
+		if ok then
+			addonVersion = self:SafeToString(value, addonVersion)
+		end
+	end
+	self:Print("Version " .. addonVersion .. ".")
+	local version, build, _, interfaceVersion
+	if type(GetBuildInfo) == "function" then
+		local ok
+		ok, version, build, _, interfaceVersion = pcall(GetBuildInfo)
+		if not ok then
+			version, build, interfaceVersion = nil, nil, nil
+		end
+	end
+	self:Print(
+		"Client "
+			.. self:SafeToString(version, "unknown")
+			.. " build "
+			.. self:SafeToString(build, "unknown")
+			.. "; interface "
+			.. self:SafeToString(interfaceVersion, "unknown")
+			.. "."
+	)
+	local capabilities = self.GetNameplateCapabilities and self:GetNameplateCapabilities() or {}
+	self:Print(
+		"Enabled: "
+			.. (self.isEnabled and "yes" or "no")
+			.. "; style overrides: "
+			.. (capabilities.styleOverrides and "available" or "unavailable")
+			.. "; border tint: "
+			.. (capabilities.borderTint and "available" or "unavailable")
+			.. "."
+	)
+	if IsNonEmptyString(capabilities.reason) then
+		self:Print(capabilities.reason)
+	end
+	local restricted = self.IsNameplateAugmentationBlockedInCurrentContext
+			and self:IsNameplateAugmentationBlockedInCurrentContext()
+		or self:IsInCombatLockdown()
+	self:Print(
+		"Restrictions active: "
+			.. (restricted and "yes" or "no")
+			.. "; combat lockdown: "
+			.. (self:IsInCombatLockdown() and "yes" or "no")
+			.. "; secret/access guards: "
+			.. ((raw_issecretvalue or raw_canaccessvalue) and "present" or "not provided")
+			.. "."
+	)
+	local function CountOwnedEntries(entries)
+		local count = 0
+		-- These are addon-owned maps. Count keys without inspecting frame objects.
+		for _ in pairs(entries or {}) do
+			count = count + 1
+		end
+		return count
+	end
+	self:Print(
+		"Pending cleanup: "
+			.. (self.pendingNameplateResetAfterCombat and "yes" or "no")
+			.. "; pending refresh: "
+			.. ((self.pendingNameplateRefreshAfterCombat or self.nameplateRefreshScheduled) and "yes" or "no")
+			.. "; queued plates: "
+			.. CountOwnedEntries(self.nameplatePendingFrames)
+			.. "."
+	)
+	self:Print(
+		"Retained layouts: "
+			.. CountOwnedEntries(self.nameplateStateByFrame)
+			.. "; tracked plates: "
+			.. CountOwnedEntries(self.trackedNamePlateFrames)
+			.. "; border overlays: "
+			.. CountOwnedEntries(self.nameplateBorderTintByUnitFrame)
+			.. "."
+	)
+	self:Print("Global style: " .. self:GetNameplateStyleLabel(self:GetCurrentGlobalNameplateStyle()) .. ".")
+	for _, unitKind in ipairs({ "partyMember", "friendlyPlayer", "enemyPlayer" }) do
+		local styleValue = self:GetOption(unitKind .. "Style")
+		local styleLabel = self:IsNameplateStyle(styleValue) and self:GetNameplateStyleLabel(styleValue)
+			or "inherit global"
+		self:Print(
+			unitKind
+				.. ": geometry "
+				.. styleLabel
+				.. "; custom border "
+				.. (self:IsBorderColorOverrideEnabledForUnitKind(unitKind) and "on" or "off")
+				.. "."
+		)
+	end
+	local snapshot = self:GetDiagnosticSnapshot()
+	if #snapshot == 0 then
+		self:Print("No diagnostic counters recorded this session.")
+	else
+		for _, entry in ipairs(snapshot) do
+			self:Print(entry.reason .. ": " .. entry.count)
+		end
+	end
 end
 
 function PvPTogether:RegisterSlashCommands()
@@ -443,6 +706,10 @@ function PvPTogether:RegisterSlashCommands()
 		local command = self:SafeToString(message, "")
 		command = command:lower():gsub("^%s+", ""):gsub("%s+$", "")
 
+		if command == "diagnostics" or command == "diag" then
+			self:PrintDiagnostics()
+			return
+		end
 		if command == "on" then
 			self:SetOption("enabled", true)
 			self:Print("Enabled.")
@@ -459,7 +726,7 @@ function PvPTogether:RegisterSlashCommands()
 			return
 		end
 		if not self:OpenOptionsWindow() then
-			self:Print("Use /pt on, /pt off, or /pt toggle.")
+			self:Print("Use /pt on, /pt off, /pt toggle, or /pt diagnostics.")
 		end
 	end
 
@@ -476,6 +743,9 @@ function PvPTogether:Enable()
 	if self.EnableNameplateModule then
 		self:EnableNameplateModule()
 	end
+	if self.StartOptionsPreviewTicker then
+		self:StartOptionsPreviewTicker()
+	end
 end
 
 function PvPTogether:Disable()
@@ -484,6 +754,12 @@ function PvPTogether:Disable()
 	end
 
 	self.isEnabled = false
+	if self.InvalidateOptionsCallbacks then
+		self:InvalidateOptionsCallbacks()
+	end
+	if self.StopOptionsPreviewTicker then
+		self:StopOptionsPreviewTicker()
+	end
 
 	if self.DisableNameplateModule then
 		self:DisableNameplateModule()

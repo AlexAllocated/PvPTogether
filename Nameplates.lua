@@ -1,1361 +1,1045 @@
 local PvPTogether = _G.PvPTogether
-
 if not PvPTogether then
 	return
 end
 
-local NAMEPLATE_CVAR_STYLE = "nameplateStyle"
-local NAMEPLATE_CVAR_SIZE = "nameplateSize"
-local NAMEPLATE_CVAR_AURA_SCALE = "nameplateAuraScale"
-local NAMEPLATE_CVAR_DEBUFF_PADDING = "nameplateDebuffPadding"
-local MAX_NAMEPLATE_UNIT_TOKENS = 80
+-- All bookkeeping belongs to the addon. Never call Blizzard's setup/reset mixins:
+-- those write shared option tables and frame fields even outside combat.
+PvPTogether.nameplateStateByFrame = {}
+PvPTogether.nameplateFrameByUnitToken = {}
+PvPTogether.nameplateHooksByUnitFrame = setmetatable({}, { __mode = "k" })
+PvPTogether.nameplateBorderTintByUnitFrame = setmetatable({}, { __mode = "k" })
+PvPTogether.nameplateStateByUnitFrame = setmetatable({}, { __mode = "k" })
 
-local SIZE_SMALL = Enum and Enum.NamePlateSize and Enum.NamePlateSize.Small or 1
-local SIZE_MEDIUM = Enum and Enum.NamePlateSize and Enum.NamePlateSize.Medium or 2
-local SIZE_LARGE = Enum and Enum.NamePlateSize and Enum.NamePlateSize.Large or 3
-local SIZE_EXTRA_LARGE = Enum and Enum.NamePlateSize and Enum.NamePlateSize.ExtraLarge or 4
-local SIZE_HUGE = Enum and Enum.NamePlateSize and Enum.NamePlateSize.Huge or 5
+local function Field(object, key)
+	local value = PvPTogether:SafeGetField(object, key)
+	return value
+end
 
-local STYLE_MODERN = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Modern or 0
-local STYLE_BLOCK = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Block or 2
-local STYLE_HEALTH_FOCUS = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.HealthFocus or 3
-local STYLE_CAST_FOCUS = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.CastFocus or 4
-local STYLE_LEGACY = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Legacy or 5
-local PARTY_CATEGORY_HOME = LE_PARTY_CATEGORY_HOME or 1
+local function Method(object, key)
+	local value = Field(object, key)
+	return type(value) == "function" and value or nil
+end
 
-local FALLBACK_NAME_PLATE_SCALES = {
-	[SIZE_SMALL] = { horizontal = 0.75, vertical = 0.8, classification = 0.8, aura = 0.75 },
-	[SIZE_MEDIUM] = { horizontal = 1.0, vertical = 1.0, classification = 1.0, aura = 1.0 },
-	[SIZE_LARGE] = { horizontal = 1.25, vertical = 1.25, classification = 1.25, aura = 1.25 },
-	[SIZE_EXTRA_LARGE] = { horizontal = 1.4, vertical = 1.4, classification = 1.4, aura = 1.4 },
-	[SIZE_HUGE] = { horizontal = 1.6, vertical = 1.6, classification = 1.6, aura = 1.6 },
-}
-local BORDER_TINT_TEXTURE_ATLAS = "UI-HUD-Nameplates-Selected"
-local BORDER_TINT_TEXTURE_ALPHA = 1.0
-
-local function IsFrameForbidden(frame)
-	if not frame or not frame.IsForbidden then
+local function Call(object, key, ...)
+	local method = Method(object, key)
+	if not method then
 		return false
 	end
-
-	local ok, isForbidden = pcall(frame.IsForbidden, frame)
-	return ok and isForbidden and true or false
+	return pcall(method, object, ...)
 end
 
-local function CanMutateFrame(frame)
-	return frame ~= nil and not IsFrameForbidden(frame)
-end
-
-local function GetParentFrameSafely(frame)
-	if not frame or type(frame.GetParent) ~= "function" then
+local function BooleanCall(fn, ...)
+	if type(fn) ~= "function" then
 		return nil
 	end
-
-	local okParent, parentFrame = pcall(frame.GetParent, frame)
-	if not okParent then
-		return nil
-	end
-	return parentFrame
-end
-
-local function IsNonSecretNonEmptyString(value)
-	if type(value) ~= "string" then
-		return false
-	end
-	if PvPTogether:IsSecretValue(value) then
-		return false
-	end
-	return value ~= ""
-end
-
-local function GetNumericCVar(cvarName, fallbackValue)
-	if not (C_CVar and type(C_CVar.GetCVar) == "function" and type(cvarName) == "string") then
-		return fallbackValue
-	end
-
-	local ok, rawValue = pcall(C_CVar.GetCVar, cvarName)
+	local ok, value = pcall(fn, ...)
 	if not ok then
-		return fallbackValue
-	end
-	if PvPTogether:IsSecretValue(rawValue) then
-		return fallbackValue
-	end
-
-	local numericValue = PvPTogether:SafeToNumber(rawValue)
-	if numericValue == nil then
-		return fallbackValue
-	end
-	return numericValue
-end
-
-local function GetNamePlateScaleData()
-	local cvarKey = NAMEPLATE_CVAR_SIZE
-	if type(NamePlateConstants) == "table" and type(NamePlateConstants.SIZE_CVAR) == "string" then
-		cvarKey = NamePlateConstants.SIZE_CVAR
-	end
-
-	local sizeValue = math.floor((GetNumericCVar(cvarKey, SIZE_MEDIUM) or SIZE_MEDIUM) + 0.5)
-	local scaleTable = type(NamePlateConstants) == "table" and NamePlateConstants.NAME_PLATE_SCALES or nil
-	local scaleData = scaleTable and scaleTable[sizeValue] or nil
-	if scaleData then
-		return scaleData
-	end
-
-	return FALLBACK_NAME_PLATE_SCALES[sizeValue] or FALLBACK_NAME_PLATE_SCALES[SIZE_MEDIUM]
-end
-
-local function IsLargeHealthBarStyle(namePlateStyle)
-	return namePlateStyle == STYLE_MODERN or namePlateStyle == STYLE_BLOCK or namePlateStyle == STYLE_HEALTH_FOCUS
-end
-
-local function IsLargeCastBarStyle(namePlateStyle)
-	return namePlateStyle == STYLE_BLOCK or namePlateStyle == STYLE_CAST_FOCUS
-end
-
-local function IsUnitNameInsideHealthBar(namePlateStyle)
-	return namePlateStyle == STYLE_MODERN or namePlateStyle == STYLE_BLOCK
-end
-
-local function IsSpellNameInsideCastBar(namePlateStyle)
-	return namePlateStyle == STYLE_BLOCK or namePlateStyle == STYLE_CAST_FOCUS
-end
-
-local function IsUnitNameColored(namePlateStyle)
-	return namePlateStyle == STYLE_LEGACY
-end
-
-local function SetPixelPoint(frame, point, relativeTo, relativePoint, offsetX, offsetY)
-	if PixelUtil and PixelUtil.SetPoint then
-		PixelUtil.SetPoint(frame, point, relativeTo, relativePoint, offsetX, offsetY)
-		return
-	end
-	frame:SetPoint(point, relativeTo, relativePoint, offsetX, offsetY)
-end
-
-local function SetPixelSize(frame, width, height)
-	if PixelUtil and PixelUtil.SetSize then
-		PixelUtil.SetSize(frame, width, height)
-		return
-	end
-	frame:SetSize(width, height)
-end
-
-local function SetPixelHeight(frame, height)
-	if PixelUtil and PixelUtil.SetHeight then
-		PixelUtil.SetHeight(frame, height)
-		return
-	end
-	frame:SetHeight(height)
-end
-
-local function GetHealthBarHeight(namePlateStyle, scaleData)
-	local largeHeight = type(NamePlateConstants) == "table" and NamePlateConstants.LARGE_HEALTH_BAR_HEIGHT or 20
-	local smallHeight = type(NamePlateConstants) == "table" and NamePlateConstants.SMALL_HEALTH_BAR_HEIGHT or 10
-	local baseHeight = IsLargeHealthBarStyle(namePlateStyle) and largeHeight or smallHeight
-	return baseHeight * (scaleData.vertical or 1.0)
-end
-
-local function GetCastBarHeight(namePlateStyle, scaleData)
-	local largeHeight = type(NamePlateConstants) == "table" and NamePlateConstants.LARGE_CAST_BAR_HEIGHT or 16
-	local smallHeight = type(NamePlateConstants) == "table" and NamePlateConstants.SMALL_CAST_BAR_HEIGHT or 10
-	local baseHeight = IsLargeCastBarStyle(namePlateStyle) and largeHeight or smallHeight
-	return baseHeight * (scaleData.vertical or 1.0)
-end
-
-local function BuildSetupOptionsForStyle(namePlateStyle)
-	if type(NamePlateSetupOptions) ~= "table" then
-		return nil, nil
-	end
-
-	local scaleData = GetNamePlateScaleData()
-	local setupOptions = {}
-	for key, value in pairs(NamePlateSetupOptions) do
-		setupOptions[key] = value
-	end
-
-	setupOptions.healthBarHeight = GetHealthBarHeight(namePlateStyle, scaleData)
-	setupOptions.castBarHeight = GetCastBarHeight(namePlateStyle, scaleData)
-	setupOptions.unitNameInsideHealthBar = IsUnitNameInsideHealthBar(namePlateStyle)
-	setupOptions.spellNameInsideCastBar = IsSpellNameInsideCastBar(namePlateStyle)
-
-	return setupOptions, scaleData
-end
-
-local function CalculateNamePlateHeight(namePlateStyle, scaleData, setupOptions)
-	local auraItemHeight = type(NamePlateConstants) == "table" and NamePlateConstants.AURA_ITEM_HEIGHT or 25
-	local auraScaleCVar = type(NamePlateConstants) == "table" and NamePlateConstants.AURA_SCALE_CVAR or NAMEPLATE_CVAR_AURA_SCALE
-	local debuffPaddingCVar = type(NamePlateConstants) == "table" and NamePlateConstants.DEBUFF_PADDING_CVAR
-		or NAMEPLATE_CVAR_DEBUFF_PADDING
-
-	local auraScale = GetNumericCVar(auraScaleCVar, 1)
-	local debuffPadding = GetNumericCVar(debuffPaddingCVar, 0)
-	local healthBarFontHeight = setupOptions.healthBarFontHeight or 12
-	local castBarFontHeight = setupOptions.castBarFontHeight or 10
-
-	local height = auraItemHeight * auraScale * (scaleData.aura or 1.0)
-	height = height + debuffPadding
-
-	if not IsUnitNameInsideHealthBar(namePlateStyle) then
-		height = height + healthBarFontHeight
-	end
-
-	height = height + setupOptions.healthBarHeight
-	height = height + setupOptions.castBarHeight
-
-	if not IsSpellNameInsideCastBar(namePlateStyle) then
-		height = height + castBarFontHeight
-	end
-
-	return height
-end
-
-local function CopyFrameOptions(baseFrameOptions, namePlateStyle)
-	if type(baseFrameOptions) ~= "table" then
 		return nil
 	end
-
-	local copiedOptions = {}
-	for key, value in pairs(baseFrameOptions) do
-		copiedOptions[key] = value
-	end
-
-	copiedOptions.colorNameBySelection = IsUnitNameColored(namePlateStyle)
-	return copiedOptions
+	return PvPTogether:SafeToBoolean(value)
 end
 
-local function IsPlayerInHomeParty(unitToken)
-	if not IsNonSecretNonEmptyString(unitToken) then
+local function SafetyAPI(namespace, name)
+	if not PvPTogether:CanAccessValue(namespace) then
+		return nil, false
+	end
+	if namespace == nil then
+		return nil, true
+	end
+	local api, readable = PvPTogether:SafeGetField(namespace, name)
+	if not readable or (api ~= nil and type(api) ~= "function") then
+		return nil, false
+	end
+	return api, true
+end
+
+local function IsToken(value)
+	return PvPTogether:CanAccessValue(value) and type(value) == "string" and value ~= ""
+end
+
+function PvPTogether:CanAccessNameplateFrame(frame)
+	if not self:CanAccessValue(frame) or (type(frame) ~= "table" and type(frame) ~= "userdata") then
 		return false
 	end
-
-	local function SafeUnitIsUnit(leftUnit, rightUnit)
-		if type(UnitIsUnit) ~= "function" then
-			return false
-		end
-		local ok, result = pcall(UnitIsUnit, leftUnit, rightUnit)
-		return ok and result and true or false
-	end
-
-	if SafeUnitIsUnit(unitToken, "player") then
-		return false
-	end
-
-	local okFriend, isFriend = pcall(UnitIsFriend, "player", unitToken)
-	if okFriend and not isFriend then
-		return false
-	end
-
-	local okParty, inParty = pcall(UnitInParty, unitToken, PARTY_CATEGORY_HOME)
-	if okParty and inParty then
-		return true
-	end
-
-	local okPartyMembers, partyCount = pcall(GetNumSubgroupMembers, PARTY_CATEGORY_HOME)
-	local subgroupCount = okPartyMembers and tonumber(partyCount) or 0
-	for index = 1, subgroupCount do
-		local partyUnitToken = "party" .. tostring(index)
-		if SafeUnitIsUnit(unitToken, partyUnitToken) then
-			return true
-		end
-	end
-
-	return false
-end
-
-local function ResolveUnitKind(namePlateFrameBase)
-	if not namePlateFrameBase or type(namePlateFrameBase.GetUnit) ~= "function" then
-		return nil
-	end
-
-	local okUnit, unitToken = pcall(namePlateFrameBase.GetUnit, namePlateFrameBase)
-	if not okUnit or not IsNonSecretNonEmptyString(unitToken) then
-		return nil
-	end
-
-	local okPlayer, isPlayer = pcall(UnitIsPlayer, unitToken)
-	if not okPlayer or not isPlayer then
-		return "npc"
-	end
-
-	local okFriend, isFriend = pcall(UnitIsFriend, "player", unitToken)
-	if okFriend and not isFriend then
-		return "enemyPlayer"
-	end
-
-	if IsPlayerInHomeParty(unitToken) then
-		return "partyMember"
-	end
-
-	if okFriend and isFriend then
-		return "friendlyPlayer"
-	end
-
-	return "enemyPlayer"
-end
-
-local function ResolveUnitKindFromUnitFrame(unitFrame)
-	if not unitFrame then
-		return nil
-	end
-
-	local unitToken = unitFrame.unit
-	if IsNonSecretNonEmptyString(unitToken) then
-		local okPlayer, isPlayer = pcall(UnitIsPlayer, unitToken)
-		if okPlayer then
-			if not isPlayer then
-				return "npc"
-			end
-
-			local okFriend, isFriend = pcall(UnitIsFriend, "player", unitToken)
-			if okFriend and not isFriend then
-				return "enemyPlayer"
-			end
-
-			if IsPlayerInHomeParty(unitToken) then
-				return "partyMember"
-			end
-
-			if okFriend and isFriend then
-				return "friendlyPlayer"
-			end
-
-			return "enemyPlayer"
-		end
-	end
-
-	local parentFrame = GetParentFrameSafely(unitFrame)
-	if parentFrame then
-		return ResolveUnitKind(parentFrame)
-	end
-
-	return nil
+	local forbidden = Method(frame, "IsForbidden")
+	return forbidden ~= nil and BooleanCall(forbidden, frame) == false
 end
 
 function PvPTogether:IsNameplateAugmentationBlockedInCurrentContext()
-	-- Do not blanket-disable inside instances (arena/battleground/dungeon).
-	-- We gate safely per-frame via CanMutateFrame/IsForbidden checks instead.
+	if self:IsInCombatLockdown() then
+		return true
+	end
+	local getState, readable = SafetyAPI(C_RestrictedActions, "GetAddOnRestrictionState")
+	if not readable then
+		return true
+	end
+	if type(getState) ~= "function" then
+		return false
+	end
+	local restrictionTypes = Field(Enum, "AddOnRestrictionType")
+	if not self:CanAccessTable(restrictionTypes) then
+		return true
+	end
+	local inactive = Field(Field(Enum, "AddOnRestrictionState"), "Inactive") or 0
+	for _, name in ipairs({ "Combat", "Encounter", "ChallengeMode", "PvPMatch", "Map" }) do
+		local restrictionType, typeReadable = self:SafeGetField(restrictionTypes, name)
+		if not typeReadable then
+			return true
+		end
+		if restrictionType ~= nil then
+			local ok, value = pcall(getState, restrictionType)
+			local state = ok and self:SafeToNumber(value) or nil
+			if state == nil or state ~= inactive then
+				return true
+			end
+		end
+	end
 	return false
 end
 
-function PvPTogether:HandleNameplateContextChange()
-	if not self.isEnabled then
-		return
-	end
-
-	if self:IsNameplateAugmentationBlockedInCurrentContext() then
-		self.pendingNameplateRefreshAfterCombat = false
-		-- Drop frame references while blocked so we never re-touch restricted nameplate objects.
-		self.trackedNamePlateFrames = setmetatable({}, { __mode = "k" })
-		self.nameplateBorderTintByUnitFrame = setmetatable({}, { __mode = "k" })
-		return
-	end
-
-	self:ReapplyAllNameplateStyles()
-end
-
-local function ForEachVisibleNameplate(callbackFn)
-	if not (C_NamePlate and type(C_NamePlate.GetNamePlates) == "function") then
-		return
-	end
-
-	local okFrames, frames = pcall(C_NamePlate.GetNamePlates, false)
-	if not okFrames or type(frames) ~= "table" then
-		return
-	end
-
-	for _, frame in pairs(frames) do
-		callbackFn(frame)
-	end
-end
-
-local function ForEachVisibleNameplateToken(callbackFn)
-	if type(callbackFn) ~= "function" then
-		return
-	end
-
-	for index = 1, MAX_NAMEPLATE_UNIT_TOKENS do
-		local unitToken = "nameplate" .. tostring(index)
-		local okExists, exists = pcall(UnitExists, unitToken)
-		if okExists and exists then
-			callbackFn(unitToken)
-		end
-	end
-end
-
-function PvPTogether:TrackNameplateFrame(namePlateFrameBase)
-	if not CanMutateFrame(namePlateFrameBase) then
+function PvPTogether:CanMutateNameplateFrame(frame)
+	if not self:CanAccessNameplateFrame(frame) then
 		return false
 	end
-
-	if type(self.trackedNamePlateFrames) ~= "table" then
-		self.trackedNamePlateFrames = setmetatable({}, { __mode = "k" })
+	local protected, readable = self:SafeGetField(frame, "IsProtected")
+	if not readable or (protected ~= nil and type(protected) ~= "function") then
+		return false
 	end
-
-	self.trackedNamePlateFrames[namePlateFrameBase] = true
+	local protection = protected and BooleanCall(protected, frame)
+	if protected and protection == nil then
+		return false
+	end
+	local restricted = self:IsNameplateAugmentationBlockedInCurrentContext()
+	if restricted and protection ~= false then
+		return false
+	end
+	local allow, permissionReadable = SafetyAPI(C_RestrictedActions, "CheckAllowProtectedFunctions")
+	if not permissionReadable then
+		return false
+	end
+	if type(allow) == "function" and BooleanCall(allow, frame, true) ~= true then
+		return false
+	end
+	if restricted and type(allow) ~= "function" then
+		return false
+	end
 	return true
 end
 
-function PvPTogether:ForEachTrackedNameplateFrame(callbackFn)
-	if type(callbackFn) ~= "function" then
-		return
-	end
-	if type(self.trackedNamePlateFrames) ~= "table" then
-		return
-	end
-
-	for frame in pairs(self.trackedNamePlateFrames) do
-		callbackFn(frame)
-	end
-end
-
-PvPTogether.nameplateBorderTintByUnitFrame = PvPTogether.nameplateBorderTintByUnitFrame
-	or setmetatable({}, { __mode = "k" })
-
-local function GetBorderTintHealthBar(unitFrame)
-	if not CanMutateFrame(unitFrame) then
-		return nil
-	end
-
-	local healthBarsContainer = unitFrame.HealthBarsContainer
-	local healthBar = healthBarsContainer and healthBarsContainer.healthBar or nil
-	if not CanMutateFrame(healthBar) then
-		return nil
-	end
-
-	return healthBar
-end
-
-local function AnchorBorderTintTexture(healthBar, texture, extraOutset)
-	if not CanMutateFrame(healthBar) or not CanMutateFrame(texture) then
-		return
-	end
-
-	local anchorTarget = healthBar.bgTexture
-	if not CanMutateFrame(anchorTarget) then
-		anchorTarget = healthBar
-	end
-
-	local outset = PvPTogether:SafeToNumber(extraOutset) or 0
-	if outset < 0 then
-		outset = 0
-	end
-
-	texture:ClearAllPoints()
-	SetPixelPoint(texture, "TOPLEFT", anchorTarget, "TOPLEFT", -1 - outset, 1 + outset)
-	SetPixelPoint(texture, "BOTTOMRIGHT", anchorTarget, "BOTTOMRIGHT", -3 + outset, 3 + outset)
-end
-
-local function EnsureBorderTintTexture(unitFrame)
-	local healthBar = GetBorderTintHealthBar(unitFrame)
-	if not healthBar then
-		return nil
-	end
-
-	local existingOverlay = PvPTogether.nameplateBorderTintByUnitFrame[unitFrame]
-	if existingOverlay and CanMutateFrame(existingOverlay.Texture) then
-		existingOverlay.HealthBar = healthBar
-		return existingOverlay
-	end
-
-	local texture = healthBar:CreateTexture(nil, "OVERLAY", nil, 2)
-	if not CanMutateFrame(texture) then
-		return nil
-	end
-
-	if texture.SetAtlas then
-		texture:SetAtlas(BORDER_TINT_TEXTURE_ATLAS, true)
-	end
-	texture:Hide()
-
-	local overlay = {
-		Texture = texture,
-		HealthBar = healthBar,
+function PvPTogether:GetNameplateCapabilities()
+	local plates = type(Field(C_NamePlate, "GetNamePlates")) == "function"
+		and type(Field(C_NamePlate, "GetNamePlateForUnit")) == "function"
+	local setup = self:CanAccessTable(NamePlateSetupOptions)
+	local anchor = setup and self:SafeToNumber(Field(NamePlateSetupOptions, "unitNameAnchorStyle"))
+	local classic = setup
+		and (
+			Field(NamePlateSetupOptions, "useClassicHealthBar") ~= false
+			or Field(NamePlateSetupOptions, "useClassicCastBar") ~= false
+		)
+	local styles = plates and setup and anchor ~= nil and not classic
+	return {
+		styleOverrides = styles == true,
+		borderTint = plates,
+		reason = not plates and "Nameplate APIs unavailable"
+			or not setup and "Blizzard nameplates not loaded"
+			or classic and "Global Classic style: native geometry retained"
+			or not anchor and "Unsupported nameplate layout"
+			or "Modern nameplate layout",
 	}
-	PvPTogether.nameplateBorderTintByUnitFrame[unitFrame] = overlay
-	return overlay
+end
+
+-- Unknown classification is never treated as an enemy. Resolve anew on every pass;
+-- no GUID or unit-kind cache can leak across recycled tokens or pooled unit frames.
+function PvPTogether:ResolveNameplateUnitKind(unitToken)
+	if not IsToken(unitToken) then
+		return nil
+	end
+	local player = BooleanCall(UnitIsPlayer, unitToken)
+	if player == nil then
+		return nil
+	end
+	if not player then
+		return "npc"
+	end
+	local friend = BooleanCall(UnitIsFriend, "player", unitToken)
+	if friend == nil then
+		return nil
+	end
+	if not friend then
+		return "enemyPlayer"
+	end
+	local own = BooleanCall(UnitIsUnit, unitToken, "player")
+	if own == nil then
+		return nil
+	end
+	if not own then
+		local inParty = BooleanCall(UnitInParty, unitToken, LE_PARTY_CATEGORY_HOME or 1)
+		if inParty == nil then
+			return nil
+		end
+		if inParty then
+			return "partyMember"
+		end
+	end
+	return "friendlyPlayer"
+end
+
+local function LiveUnit(frame)
+	if not PvPTogether:CanAccessNameplateFrame(frame) then
+		return nil
+	end
+	local ok, token = Call(frame, "GetUnit")
+	if not ok or not IsToken(token) then
+		return nil
+	end
+	local getPlate = Field(C_NamePlate, "GetNamePlateForUnit")
+	if type(getPlate) ~= "function" then
+		return nil
+	end
+	local found, current = pcall(getPlate, token, false)
+	if not found or not PvPTogether:CanAccessValue(current) or current ~= frame then
+		return nil
+	end
+	return token
+end
+
+-- A small reversible journal of native widget properties. Preflight the entire
+-- plan, including every anchor target and original value, before its first write.
+-- pcall contains a widget error; it is not used as a substitute for access checks.
+local function Snapshot(op)
+	local object = op.object
+	if not PvPTogether:CanMutateNameplateFrame(object) then
+		return nil
+	end
+	if op.kind == "points" then
+		local ok, count = Call(object, "GetNumPoints")
+		count = ok and PvPTogether:SafeToNumber(count) or nil
+		if not count or count < 0 or count > 16 or count % 1 ~= 0 then
+			return nil
+		end
+		local points = {}
+		for i = 1, count do
+			local got, point, relative, relativePoint, x, y = Call(object, "GetPoint", i)
+			if
+				not got
+				or not IsToken(point)
+				or not IsToken(relativePoint)
+				or not PvPTogether:CanAccessValue(relative)
+			then
+				return nil
+			end
+			if relative ~= nil and not PvPTogether:CanAccessNameplateFrame(relative) then
+				return nil
+			end
+			x, y = PvPTogether:SafeToNumber(x), PvPTogether:SafeToNumber(y)
+			if x == nil or y == nil then
+				return nil
+			end
+			points[#points + 1] = { point, relative, relativePoint, x, y }
+		end
+		return points
+	elseif op.kind == "height" then
+		local ok, value = Call(object, "GetHeight")
+		value = ok and PvPTogether:SafeToNumber(value) or nil
+		if value then
+			return { value }
+		end
+	elseif op.kind == "justify" then
+		local ok, value = Call(object, "GetJustifyH")
+		if ok and IsToken(value) then
+			return { value }
+		end
+	elseif op.kind == "font" then
+		local ok, _, height = Call(object, "GetFont")
+		height = PvPTogether:SafeToNumber(height)
+		local gotFont, font = Call(object, "GetFontObject")
+		local gotName, fontName = Call(font, "GetName")
+		if ok and gotFont and gotName and IsToken(fontName) and height then
+			return { fontName, height }
+		end
+	end
+	return nil
+end
+
+local setterByKind = { height = "SetHeight", justify = "SetJustifyH" }
+local function CanAnchor(object)
+	if not PvPTogether:CanAccessNameplateFrame(object) then
+		return false
+	end
+	for _, name in ipairs({ "IsAnchoringRestricted", "IsAnchoringSecret" }) do
+		local predicate, readable = PvPTogether:SafeGetField(object, name)
+		if not readable then
+			return false
+		end
+		if predicate ~= nil and (type(predicate) ~= "function" or BooleanCall(predicate, object) ~= false) then
+			return false
+		end
+	end
+	return true
+end
+local function CanWrite(op, values)
+	if not PvPTogether:CanMutateNameplateFrame(op.object) then
+		return false
+	end
+	if op.kind == "points" then
+		if not Method(op.object, "ClearAllPoints") or not Method(op.object, "SetPoint") then
+			return false
+		end
+		if not CanAnchor(op.object) then
+			return false
+		end
+		for _, point in ipairs(values) do
+			if point[2] ~= nil and not CanAnchor(point[2]) then
+				return false
+			end
+		end
+		return true
+	end
+	if op.kind == "font" then
+		return Method(op.object, "SetFontObject") ~= nil and Method(op.object, "SetTextHeight") ~= nil
+	end
+	return Method(op.object, setterByKind[op.kind]) ~= nil
+end
+
+local function Write(op, values)
+	if not CanWrite(op, values) then
+		return false
+	end
+	if op.kind == "points" then
+		if not Call(op.object, "ClearAllPoints") then
+			return false
+		end
+		for _, point in ipairs(values) do
+			if not Call(op.object, "SetPoint", point[1], point[2], point[3], point[4], point[5]) then
+				return false
+			end
+		end
+		return true
+	end
+	if op.kind == "font" then
+		return Call(op.object, "SetFontObject", values[1]) and Call(op.object, "SetTextHeight", values[2])
+	end
+	return Call(op.object, setterByKind[op.kind], unpack(values))
+end
+
+local function SameTuple(left, right, count)
+	for index = 1, count do
+		local a, b = left[index], right[index]
+		if not PvPTogether:CanAccessValue(a) or not PvPTogether:CanAccessValue(b) then
+			return nil
+		end
+		if a ~= b then
+			return false
+		end
+	end
+	return true
+end
+
+local function SameProperties(op, current)
+	if op.kind ~= "points" then
+		return SameTuple(current, op.applied, #current)
+	end
+	if #current ~= #op.applied then
+		return false
+	end
+	for index = 1, #current do
+		local match = SameTuple(current[index], op.applied[index], 5)
+		if match ~= true then
+			return match
+		end
+	end
+	return true
+end
+
+local function Restore(state)
+	local remaining = {}
+	for i = #state.journal, 1, -1 do
+		local op = state.journal[i]
+		local current = Snapshot(op)
+		-- A different owner changed this property after our last write. Relinquish
+		-- it instead of restoring our old baseline over their current presentation.
+		local match = true
+		if op.applied then
+			match = current and SameProperties(op, current)
+		end
+		if match == nil or (match and not Write(op, op.original)) then
+			table.insert(remaining, 1, op)
+		end
+	end
+	state.journal = remaining
+	return #remaining == 0
+end
+
+local function Execute(state, plan)
+	for _, op in ipairs(plan) do
+		op.original = Snapshot(op)
+		if not op.original or not CanWrite(op, op.values) then
+			PvPTogether:RecordDiagnostic("layout-preflight")
+			return false
+		end
+	end
+	for _, op in ipairs(plan) do
+		state.journal[#state.journal + 1] = op -- Retain rollback even for a partial SetPoint failure.
+		if not Write(op, op.values) then
+			PvPTogether:RecordDiagnostic("layout-write")
+			Restore(state)
+			return false
+		end
+		op.applied = Snapshot(op)
+	end
+	return true
+end
+
+local function Add(plan, object, kind, group, values)
+	plan[#plan + 1] = { object = object, kind = kind, group = group, values = values }
+end
+
+local function Point(point, relative, relativePoint, x, y)
+	return { point, relative, relativePoint, x, y }
+end
+
+local function Child(frame, key)
+	if not PvPTogether:CanAccessNameplateFrame(frame) then
+		return nil
+	end
+	local child = Field(frame, key)
+	if PvPTogether:CanAccessNameplateFrame(child) then
+		return child
+	end
+	return nil
+end
+
+local function Positive(object, key)
+	local value = PvPTogether:SafeToNumber(Field(object, key))
+	return value and value > 0 and value or nil
+end
+
+local function BuildPlan(unitFrame, style)
+	local castContainer = Child(unitFrame, "CastBarsContainer")
+	local castBar = Child(castContainer, "castBar")
+	local healthContainer = Child(unitFrame, "HealthBarsContainer")
+	local healthBar = Child(healthContainer, "healthBar")
+	local name = Child(unitFrame, "name")
+	local icon = Child(castBar, "Icon")
+	local shield = Child(castBar, "BorderShield")
+	local text, left, right = Child(healthBar, "Text"), Child(healthBar, "LeftText"), Child(healthBar, "RightText")
+	if not castBar or not healthBar or not name or not icon or not shield or not text or not left or not right then
+		return nil
+	end
+	-- Read the cached display flag; calling IsShowOnlyName/ShouldDisplay can populate
+	-- Blizzard fields. Unknown flags defer this pass instead of executing that path.
+	local showOnlyName = PvPTogether:SafeToBoolean(Field(unitFrame, "showOnlyName"))
+	if showOnlyName == nil then
+		return nil
+	end
+	local vertical = Positive(NamePlateSetupOptions, "verticalScale")
+	local iconHeight = Positive(NamePlateSetupOptions, "castIconHeight")
+	if not vertical or not iconHeight then
+		return nil
+	end
+	local styles = Field(Enum, "NamePlateStyle")
+	local modern, block = Field(styles, "Modern"), Field(styles, "Block")
+	local insideName = style == modern or style == block
+	local insideSpell = style == block or style == Field(styles, "CastFocus")
+	local largeHealth = insideName or style == Field(styles, "HealthFocus")
+	local healthHeight =
+		Positive(NamePlateConstants, largeHealth and "LARGE_HEALTH_BAR_HEIGHT" or "SMALL_HEALTH_BAR_HEIGHT")
+	local castHeight = Positive(NamePlateConstants, insideSpell and "LARGE_CAST_BAR_HEIGHT" or "SMALL_CAST_BAR_HEIGHT")
+	if not healthHeight or not castHeight then
+		return nil
+	end
+	healthHeight, castHeight = healthHeight * vertical, castHeight * vertical
+	local plan = {}
+	Add(plan, castContainer, "height", "options", { castHeight + (insideSpell and 0 or iconHeight) })
+	Add(plan, castBar, "height", "options", { castHeight })
+	if insideSpell then
+		Add(plan, castBar, "points", "anchors", {
+			Point("TOPLEFT", castContainer, "TOPLEFT", 0, 0),
+			Point("BOTTOMRIGHT", castContainer, "BOTTOMRIGHT", 0, 0),
+		})
+		Add(plan, icon, "points", "anchors", { Point("LEFT", castBar, "LEFT", 0, 0) })
+	else
+		Add(plan, icon, "points", "anchors", { Point("BOTTOMLEFT", castContainer, "BOTTOMLEFT", 0, 0) })
+		Add(plan, castBar, "points", "anchors", {
+			Point("BOTTOM", icon, "TOP", 0, 0),
+			Point("LEFT", castContainer, "BOTTOMLEFT", 0, 0),
+			Point("RIGHT", castContainer, "BOTTOMRIGHT", 0, 0),
+		})
+	end
+	-- The health-container anchors, health textures, level indicators, raid marker,
+	-- and CC/LoC anchors remain native. This preserves Forever's level-width offsets.
+	Add(plan, healthContainer, "height", "anchors", { healthHeight })
+	local outlineAbove = Field(NamePlateSetupOptions, "useOutlinedNameWhenAboveHealthBar") == true
+	local fontName = insideName and "SystemFont_NamePlate_Outlined" or "SystemFont_NamePlate"
+	local nameFontName = (insideName or outlineAbove) and "SystemFont_NamePlate_Outlined" or "SystemFont_NamePlate"
+	local fontHeight = Positive(NamePlateSetupOptions, "healthBarFontHeight")
+	if not fontHeight then
+		return nil
+	end
+	for _, target in ipairs({ name, text, left, right }) do
+		local selectedFont = target == name and nameFontName or fontName
+		if not PvPTogether:CanAccessValue(Field(_G, selectedFont)) or Field(_G, selectedFont) == nil then
+			return nil
+		end
+		Add(plan, target, "font", "options", { selectedFont, fontHeight })
+	end
+	local justification = Field(NamePlateSetupOptions, "nameJustificationWhenAboveHealthBar")
+	if justification ~= "CENTER" and justification ~= "RIGHT" then
+		justification = "LEFT"
+	end
+	Add(
+		plan,
+		name,
+		"justify",
+		"anchors",
+		{ (showOnlyName or (not insideName and justification == "CENTER")) and "CENTER" or "LEFT" }
+	)
+	if insideName then
+		Add(plan, left, "points", "anchors", { Point("RIGHT", healthBar, "RIGHT", -4, 0) })
+		Add(plan, right, "points", "anchors", { Point("RIGHT", left, "LEFT", -2, 0) })
+		Add(plan, text, "points", "anchors", { Point("RIGHT", right, "LEFT", 2, 0) })
+		Add(plan, name, "points", "anchors", {
+			Point("LEFT", healthContainer, "LEFT", 4, 0),
+			Point(
+				"RIGHT",
+				showOnlyName and healthContainer or text,
+				showOnlyName and "RIGHT" or "LEFT",
+				showOnlyName and -4 or -2,
+				0
+			),
+		})
+	else
+		Add(plan, left, "points", "anchors", { Point("BOTTOMRIGHT", healthBar, "TOPRIGHT", -4, 2) })
+		Add(plan, right, "points", "anchors", { Point("BOTTOMRIGHT", left, "BOTTOMLEFT", -2, 0) })
+		Add(plan, text, "points", "anchors", { Point("BOTTOMRIGHT", right, "BOTTOMLEFT", 2, 0) })
+		local spacing = PvPTogether:SafeToNumber(Field(NamePlateSetupOptions, "healthBarToNameAboveSpacing")) or 2
+		local namePoints = {
+			Point("BOTTOMLEFT", healthContainer, "TOPLEFT", outlineAbove and 0 or 4, spacing),
+			Point(
+				"BOTTOMRIGHT",
+				showOnlyName and healthContainer or text,
+				showOnlyName and "TOPRIGHT" or "BOTTOMLEFT",
+				showOnlyName and -4 or -2,
+				showOnlyName and spacing or 0
+			),
+		}
+		-- Forever may place its level indicator to the right of the shortened bar.
+		local level = Child(unitFrame, "PlayerLevelDiffFrame")
+		if outlineAbove and level then
+			local shownOK, shown = Call(level, "IsShown")
+			if not shownOK or PvPTogether:SafeToBoolean(shown) == nil then
+				return nil
+			end
+			if shown then
+				local ok, _, _, relativePoint = Call(level, "GetPoint", 1)
+				if not ok or not PvPTogether:CanAccessValue(relativePoint) then
+					return nil
+				end
+				if relativePoint == "RIGHT" and not showOnlyName then
+					namePoints[2] = Point("RIGHT", level, "RIGHT", 0, 0)
+				end
+			end
+		end
+		Add(plan, name, "points", "anchors", namePoints)
+	end
+	local debuffs = Child(Child(unitFrame, "AurasFrame"), "DebuffListFrame")
+	if debuffs then
+		local padding = 0
+		local getCVar = Field(C_CVar, "GetCVar")
+		if type(getCVar) == "function" then
+			local ok, raw = pcall(getCVar, "nameplateDebuffPadding")
+			padding = ok and PvPTogether:SafeToNumber(raw) or nil
+			if padding == nil then
+				return nil
+			end
+		end
+		Add(
+			plan,
+			debuffs,
+			"points",
+			"anchors",
+			{ Point("BOTTOM", insideName and healthBar or name, "TOP", 0, padding) }
+		)
+	end
+	return plan
 end
 
 function PvPTogether:HideBorderTintForUnitFrame(unitFrame)
-	if not unitFrame then
-		return
-	end
-
-	local overlay = self.nameplateBorderTintByUnitFrame and self.nameplateBorderTintByUnitFrame[unitFrame] or nil
+	local overlay = self.nameplateBorderTintByUnitFrame[unitFrame]
 	if not overlay then
-		return
+		return true
 	end
-
-	if overlay.Texture and overlay.Texture.Hide and not IsFrameForbidden(overlay.Texture) then
-		overlay.Texture:Hide()
+	if overlay.visible == false then
+		return true
 	end
+	-- This region belongs to us. Harmless Hide on an accessible, unprotected
+	-- texture must remain possible during combat, or the unit-frame pool can
+	-- display the previous unit's tint on its next occupant. Layout stays blocked.
+	if not self:CanAccessNameplateFrame(overlay.Texture) then
+		return false
+	end
+	local protected, readable = self:SafeGetField(overlay.Texture, "IsProtected")
+	if not readable or (protected ~= nil and type(protected) ~= "function") then
+		return false
+	end
+	local protection = protected and BooleanCall(protected, overlay.Texture)
+	if protected and protection == nil then
+		return false
+	end
+	local allow, permissionReadable = SafetyAPI(C_RestrictedActions, "CheckAllowProtectedFunctions")
+	if not permissionReadable then
+		return false
+	end
+	if type(allow) == "function" then
+		if BooleanCall(allow, overlay.Texture, true) ~= true then
+			return false
+		end
+	elseif self:IsNameplateAugmentationBlockedInCurrentContext() and protection ~= false then
+		return false
+	end
+	local hidden = Call(overlay.Texture, "Hide")
+	if hidden then
+		overlay.visible = false
+	end
+	return hidden
 end
 
 function PvPTogether:ApplyBorderTintForUnitFrame(unitFrame, unitKind)
-	if not self.isEnabled or type(unitKind) ~= "string" then
-		self:HideBorderTintForUnitFrame(unitFrame)
-		return
+	if not self.isEnabled or not unitKind or not self:IsBorderColorOverrideEnabledForUnitKind(unitKind) then
+		return self:HideBorderTintForUnitFrame(unitFrame)
 	end
-
-	if not self:IsBorderColorOverrideEnabledForUnitKind(unitKind) then
-		self:HideBorderTintForUnitFrame(unitFrame)
-		return
+	local healthBar = Child(Child(unitFrame, "HealthBarsContainer"), "healthBar")
+	if not self:CanMutateNameplateFrame(healthBar) then
+		return false
 	end
-
-	local overlay = EnsureBorderTintTexture(unitFrame)
-	if not overlay or not CanMutateFrame(overlay.Texture) then
-		return
+	local ok, shown = Call(healthBar, "IsShown")
+	if not ok or self:SafeToBoolean(shown) ~= true then
+		return self:HideBorderTintForUnitFrame(unitFrame)
 	end
-
-	local healthBar = overlay.HealthBar
-	if not CanMutateFrame(healthBar) then
-		self:HideBorderTintForUnitFrame(unitFrame)
-		return
+	local overlay = self.nameplateBorderTintByUnitFrame[unitFrame]
+	if overlay and overlay.HealthBar ~= healthBar then
+		if not self:HideBorderTintForUnitFrame(unitFrame) then
+			return false
+		end
+		overlay = nil -- A texture never migrates to a replacement Blizzard health bar.
 	end
-
-	if healthBar.IsShown and not healthBar:IsShown() then
-		self:HideBorderTintForUnitFrame(unitFrame)
-		return
+	if not overlay then
+		local created, texture = Call(healthBar, "CreateTexture", nil, "OVERLAY", nil, 2)
+		if not created or not self:CanMutateNameplateFrame(texture) then
+			return false
+		end
+		overlay = { Texture = texture, HealthBar = healthBar }
+		self.nameplateBorderTintByUnitFrame[unitFrame] = overlay
+		if not Call(texture, "Hide") then
+			return false
+		end
+		overlay.visible = false
 	end
-
-	AnchorBorderTintTexture(healthBar, overlay.Texture, 0)
-
+	if not self:CanMutateNameplateFrame(overlay.Texture) then
+		return false
+	end
+	if not overlay.ready then
+		if not Call(overlay.Texture, "SetAtlas", "UI-HUD-Nameplates-Selected", true) then
+			return false
+		end
+		overlay.ready = true
+	end
+	local anchor = Child(healthBar, "bgTexture") or healthBar
+	if not CanWrite({ object = overlay.Texture, kind = "points" }, { Point("TOPLEFT", anchor, "TOPLEFT", -1, 1) }) then
+		return false
+	end
 	local color = self:GetConfiguredBorderColorForUnitKind(unitKind)
-	local tintAlpha = BORDER_TINT_TEXTURE_ALPHA
-	if healthBar.GetAlpha then
-		local healthBarAlpha = healthBar:GetAlpha()
-		if type(healthBarAlpha) == "number" then
-				if healthBarAlpha < 0 then
-					healthBarAlpha = 0
-				elseif healthBarAlpha > 1 then
-					healthBarAlpha = 1
-				end
-				tintAlpha = healthBarAlpha * BORDER_TINT_TEXTURE_ALPHA
-			end
+	-- Parent alpha already applies to the texture. Reading/multiplying it would
+	-- both double-fade the tint and branch on a potentially secret alpha.
+	local anchored = Call(overlay.Texture, "ClearAllPoints")
+		and Call(overlay.Texture, "SetPoint", "TOPLEFT", anchor, "TOPLEFT", -1, 1)
+		and Call(overlay.Texture, "SetPoint", "BOTTOMRIGHT", anchor, "BOTTOMRIGHT", -3, 3)
+	if not anchored or not Call(overlay.Texture, "SetVertexColor", color.r, color.g, color.b, 1) then
+		return false
 	end
-
-	if overlay.Texture.SetVertexColor then
-		overlay.Texture:SetVertexColor(color.r, color.g, color.b, tintAlpha)
-	elseif overlay.Texture.SetColorTexture then
-		overlay.Texture:SetColorTexture(color.r, color.g, color.b, tintAlpha)
+	local displayed = Call(overlay.Texture, "Show")
+	if displayed then
+		overlay.visible = true
 	end
-
-	overlay.Texture:Show()
+	return displayed
 end
 
 function PvPTogether:HideAllBorderTintOverrides()
-	if type(self.nameplateBorderTintByUnitFrame) ~= "table" then
-		return
-	end
-
+	local complete = true
 	for unitFrame in pairs(self.nameplateBorderTintByUnitFrame) do
-		self:HideBorderTintForUnitFrame(unitFrame)
+		if not self:HideBorderTintForUnitFrame(unitFrame) then
+			complete = false
+		end
+	end
+	return complete
+end
+
+function PvPTogether:OnNativeNameplateLayout(unitFrame, group)
+	-- A native pass supersedes only the properties it actually writes. Keep the
+	-- remaining journal for disable, removal, or a later unrestricted retry.
+	if not self:CanAccessValue(unitFrame) or unitFrame == nil then
+		return
+	end
+	local state = self.nameplateStateByUnitFrame[unitFrame]
+	if state then
+		local remaining = {}
+		for _, op in ipairs(state.journal) do
+			if op.group ~= group and op.group ~= "both" then
+				remaining[#remaining + 1] = op
+			end
+		end
+		state.journal = remaining
+	end
+	if self.isEnabled and state then
+		self:ScheduleReapplyAllNameplateStyles(0.05, state.frame)
 	end
 end
 
-local function ApplyCustomAnchors(unitFrame, setupOptions)
-	if type(unitFrame) ~= "table" then
-		return
-	end
-	if not CanMutateFrame(unitFrame) then
-		return
-	end
-
-	local castBar = unitFrame.castBar
-	local healthBarsContainer = unitFrame.HealthBarsContainer
-	local aurasFrame = unitFrame.AurasFrame
-	local raidTargetFrame = unitFrame.RaidTargetFrame
-	local name = unitFrame.name
-	if
-		not castBar
-		or not healthBarsContainer
-		or not aurasFrame
-		or not raidTargetFrame
-		or not name
-		or not castBar.Icon
-		or not castBar.BorderShield
-		or not healthBarsContainer.healthBar
-	then
-		return
-	end
-
-	local healthBar = healthBarsContainer.healthBar
-	local healthBarText = healthBar.Text
-	local healthBarLeftText = healthBar.LeftText
-	local healthBarRightText = healthBar.RightText
-	if not healthBarText or not healthBarLeftText or not healthBarRightText then
-		return
-	end
-
-	castBar:ClearAllPoints()
-	castBar.Icon:ClearAllPoints()
-	castBar.BorderShield:ClearAllPoints()
-
-	if setupOptions.spellNameInsideCastBar == true then
-		SetPixelPoint(castBar, "BOTTOMLEFT", unitFrame, "BOTTOMLEFT", 12, 0)
-		SetPixelPoint(castBar, "BOTTOMRIGHT", unitFrame, "BOTTOMRIGHT", -12, 0)
-		SetPixelPoint(castBar.Icon, "LEFT", castBar, "LEFT", 0, 0)
-	else
-		SetPixelPoint(castBar.Icon, "BOTTOMLEFT", unitFrame, "BOTTOMLEFT", 12, 0)
-		SetPixelPoint(castBar, "BOTTOM", castBar.Icon, "TOP", 0, 0)
-		SetPixelPoint(castBar, "LEFT", unitFrame, "BOTTOMLEFT", 12, 0)
-		SetPixelPoint(castBar, "RIGHT", unitFrame, "BOTTOMRIGHT", -12, 0)
-	end
-
-	SetPixelSize(castBar.Icon, setupOptions.castIconWidth, setupOptions.castIconHeight)
-	SetPixelSize(castBar.BorderShield, setupOptions.castBarShieldWidth, setupOptions.castBarShieldHeight)
-	SetPixelPoint(castBar.BorderShield, "RIGHT", castBar.Icon, "RIGHT", 0, 0)
-
-	if castBar.ImportantCastIndicator then
-		local namePlateSize = math.floor((GetNumericCVar(NAMEPLATE_CVAR_SIZE, SIZE_MEDIUM) or SIZE_MEDIUM) + 0.5)
-		if namePlateSize < SIZE_MEDIUM then
-			SetPixelPoint(castBar.ImportantCastIndicator, "TOPLEFT", castBar, "TOPLEFT", -20, 3)
-			SetPixelPoint(castBar.ImportantCastIndicator, "BOTTOMRIGHT", castBar, "BOTTOMRIGHT", 20, -3)
-		else
-			SetPixelPoint(castBar.ImportantCastIndicator, "TOPLEFT", castBar, "TOPLEFT", -26, 3)
-			SetPixelPoint(castBar.ImportantCastIndicator, "BOTTOMRIGHT", castBar, "BOTTOMRIGHT", 25, -3)
-		end
-	end
-
-	healthBarsContainer:ClearAllPoints()
-	SetPixelPoint(healthBarsContainer, "BOTTOMLEFT", castBar, "TOPLEFT", 0, 2)
-	SetPixelPoint(healthBarsContainer, "BOTTOMRIGHT", castBar, "TOPRIGHT", 0, 2)
-	SetPixelHeight(healthBarsContainer, setupOptions.healthBarHeight)
-
-	name:ClearAllPoints()
-	healthBarText:ClearAllPoints()
-	healthBarLeftText:ClearAllPoints()
-	healthBarRightText:ClearAllPoints()
-
-	local showOnlyName = unitFrame.IsShowOnlyName and unitFrame:IsShowOnlyName()
-	if showOnlyName then
-		name:SetJustifyH("CENTER")
-		if setupOptions.unitNameInsideHealthBar == true then
-			SetPixelPoint(name, "LEFT", healthBarsContainer, "LEFT", 4, 0)
-			SetPixelPoint(name, "RIGHT", healthBarsContainer, "RIGHT", -4, 0)
-		else
-			SetPixelPoint(name, "BOTTOMLEFT", healthBarsContainer, "TOPLEFT", 4, 2)
-			SetPixelPoint(name, "BOTTOMRIGHT", healthBarsContainer, "TOPRIGHT", -4, 2)
-		end
-	else
-		name:SetJustifyH("LEFT")
-		if setupOptions.unitNameInsideHealthBar == true then
-			SetPixelPoint(healthBarLeftText, "RIGHT", healthBar, "RIGHT", -4, 0)
-			SetPixelPoint(healthBarRightText, "RIGHT", healthBarLeftText, "LEFT", -2, 0)
-			SetPixelPoint(healthBarText, "RIGHT", healthBarRightText, "LEFT", 2, 0)
-			SetPixelPoint(name, "LEFT", healthBarsContainer, "LEFT", 4, 0)
-			SetPixelPoint(name, "RIGHT", healthBarText, "LEFT", -2, 0)
-		else
-			SetPixelPoint(healthBarLeftText, "BOTTOMRIGHT", healthBar, "TOPRIGHT", -4, 2)
-			SetPixelPoint(healthBarRightText, "BOTTOMRIGHT", healthBarLeftText, "BOTTOMLEFT", -2, 0)
-			SetPixelPoint(healthBarText, "BOTTOMRIGHT", healthBarRightText, "BOTTOMLEFT", 2, 0)
-			SetPixelPoint(name, "BOTTOMLEFT", healthBarsContainer, "TOPLEFT", 4, 2)
-			SetPixelPoint(name, "BOTTOMRIGHT", healthBarText, "BOTTOMLEFT", -2, 0)
-		end
-	end
-
-	if name.GetLineHeight then
-		local lineHeight = name:GetLineHeight()
-		if type(lineHeight) == "number" and lineHeight > 0 then
-			SetPixelHeight(name, lineHeight)
-		end
-	end
-
-	if unitFrame.overAbsorbGlow then
-		unitFrame.overAbsorbGlow:ClearAllPoints()
-		SetPixelPoint(unitFrame.overAbsorbGlow, "BOTTOMLEFT", healthBar, "BOTTOMRIGHT", -4, -1)
-		SetPixelPoint(unitFrame.overAbsorbGlow, "TOPLEFT", healthBar, "TOPRIGHT", -4, 1)
-		SetPixelHeight(unitFrame.overAbsorbGlow, 8)
-	end
-
-	if unitFrame.overHealAbsorbGlow then
-		unitFrame.overHealAbsorbGlow:ClearAllPoints()
-		SetPixelPoint(unitFrame.overHealAbsorbGlow, "BOTTOMRIGHT", healthBar, "BOTTOMLEFT", 2, -1)
-		SetPixelPoint(unitFrame.overHealAbsorbGlow, "TOPRIGHT", healthBar, "TOPLEFT", 2, 1)
-		if PixelUtil and PixelUtil.SetWidth then
-			PixelUtil.SetWidth(unitFrame.overHealAbsorbGlow, 8)
-		else
-			unitFrame.overHealAbsorbGlow:SetWidth(8)
-		end
-	end
-
-	if healthBar.bgTexture then
-		SetPixelPoint(healthBar.bgTexture, "TOPLEFT", healthBar, "TOPLEFT", -2, 3)
-		SetPixelPoint(healthBar.bgTexture, "BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 6, -6)
-	end
-
-	if healthBar.selectedBorder and healthBar.bgTexture then
-		SetPixelPoint(healthBar.selectedBorder, "TOPLEFT", healthBar.bgTexture, "TOPLEFT", -1, 1)
-		SetPixelPoint(healthBar.selectedBorder, "BOTTOMRIGHT", healthBar.bgTexture, "BOTTOMRIGHT", -3, 3)
-	end
-
-	local debuffPaddingCVar = type(NamePlateConstants) == "table" and NamePlateConstants.DEBUFF_PADDING_CVAR
-		or NAMEPLATE_CVAR_DEBUFF_PADDING
-	local debuffPadding = GetNumericCVar(debuffPaddingCVar, 0)
-	if aurasFrame.DebuffListFrame then
-		if setupOptions.unitNameInsideHealthBar == true then
-			SetPixelPoint(aurasFrame.DebuffListFrame, "BOTTOM", healthBar, "TOP", 0, debuffPadding)
-		else
-			SetPixelPoint(aurasFrame.DebuffListFrame, "BOTTOM", name, "TOP", 0, debuffPadding)
-		end
-	end
-
-	raidTargetFrame:ClearAllPoints()
-	if showOnlyName then
-		SetPixelPoint(raidTargetFrame, "BOTTOM", name, "TOP", 0, 10)
-	else
-		SetPixelPoint(raidTargetFrame, "RIGHT", healthBarsContainer, "LEFT", 0, 0)
-	end
-end
-
-local function ApplySetupOptionsVisuals(unitFrame, setupOptions)
-	if not unitFrame or not setupOptions then
-		return
-	end
-
-	local castBar = unitFrame.castBar
-	if castBar then
-		if castBar.SetHeight then
-			castBar:SetHeight(setupOptions.castBarHeight)
-		end
-		if castBar.Spark and castBar.Spark.SetHeight then
-			castBar.Spark:SetHeight(setupOptions.castBarHeight + 8)
-		end
-		if castBar.Text and castBar.Text.SetTextHeight then
-			castBar.Text:SetTextHeight(setupOptions.castBarFontHeight)
-		end
-		if castBar.CastTargetNameText and castBar.CastTargetNameText.SetTextHeight then
-			castBar.CastTargetNameText:SetTextHeight(setupOptions.castBarFontHeight)
-		end
-	end
-
-	local healthBar = unitFrame.HealthBarsContainer and unitFrame.HealthBarsContainer.healthBar or nil
-	if healthBar then
-		if setupOptions.unitNameInsideHealthBar then
-			if unitFrame.name and unitFrame.name.SetFontObject then
-				unitFrame.name:SetFontObject("SystemFont_NamePlate_Outlined")
-			end
-			if healthBar.Text and healthBar.Text.SetFontObject then
-				healthBar.Text:SetFontObject("SystemFont_NamePlate_Outlined")
-			end
-			if healthBar.LeftText and healthBar.LeftText.SetFontObject then
-				healthBar.LeftText:SetFontObject("SystemFont_NamePlate_Outlined")
-			end
-			if healthBar.RightText and healthBar.RightText.SetFontObject then
-				healthBar.RightText:SetFontObject("SystemFont_NamePlate_Outlined")
-			end
-		else
-			if unitFrame.name and unitFrame.name.SetFontObject then
-				unitFrame.name:SetFontObject("SystemFont_NamePlate")
-			end
-			if healthBar.Text and healthBar.Text.SetFontObject then
-				healthBar.Text:SetFontObject("SystemFont_NamePlate")
-			end
-			if healthBar.LeftText and healthBar.LeftText.SetFontObject then
-				healthBar.LeftText:SetFontObject("SystemFont_NamePlate")
-			end
-			if healthBar.RightText and healthBar.RightText.SetFontObject then
-				healthBar.RightText:SetFontObject("SystemFont_NamePlate")
-			end
-		end
-
-		if unitFrame.name and unitFrame.name.SetTextHeight then
-			unitFrame.name:SetTextHeight(setupOptions.healthBarFontHeight)
-		end
-		if healthBar.Text and healthBar.Text.SetTextHeight then
-			healthBar.Text:SetTextHeight(setupOptions.healthBarFontHeight)
-		end
-		if healthBar.LeftText and healthBar.LeftText.SetTextHeight then
-			healthBar.LeftText:SetTextHeight(setupOptions.healthBarFontHeight)
-		end
-		if healthBar.RightText and healthBar.RightText.SetTextHeight then
-			healthBar.RightText:SetTextHeight(setupOptions.healthBarFontHeight)
-		end
-	end
-
-	if unitFrame.ClassificationFrame and unitFrame.ClassificationFrame.SetScale then
-		unitFrame.ClassificationFrame:SetScale(setupOptions.classificationScale or 1.0)
-	end
-	if unitFrame.PlayerLevelDiffFrame and unitFrame.PlayerLevelDiffFrame.SetScale then
-		unitFrame.PlayerLevelDiffFrame:SetScale(setupOptions.classificationScale or 1.0)
-	end
-end
-
-local function ApplyCalculatedFrameSize(namePlateFrameBase, styleValue, scaleData, setupOptions)
-	if
-		not namePlateFrameBase
-		or type(namePlateFrameBase.SetSize) ~= "function"
-		or type(namePlateFrameBase.GetWidth) ~= "function"
-	then
-		return
-	end
-
-	local frameHeight = CalculateNamePlateHeight(styleValue, scaleData, setupOptions)
-	if type(frameHeight) ~= "number" or frameHeight <= 0 then
-		return
-	end
-
-	local okWidth, currentWidth = pcall(namePlateFrameBase.GetWidth, namePlateFrameBase)
-	local widthValue = okWidth and PvPTogether:SafeToNumber(currentWidth) or nil
-	if not (widthValue and widthValue > 0) then
-		return
-	end
-
-	-- Nameplate frame sizing can become protected/forbidden in PvP instance flows.
-	-- Skip SetSize to avoid ADDON_ACTION_BLOCKED while still applying our style/tint visuals.
-	return
-end
-
-function PvPTogether:ReapplyStyleForNameplateFrame(namePlateFrameBase)
-	if not CanMutateFrame(namePlateFrameBase) then
+function PvPTogether:InstallNameplateFrameHooks(unitFrame)
+	if not self:CanAccessNameplateFrame(unitFrame) or type(hooksecurefunc) ~= "function" then
 		return false
 	end
-	self:TrackNameplateFrame(namePlateFrameBase)
+	local hooks = self.nameplateHooksByUnitFrame[unitFrame] or {}
+	self.nameplateHooksByUnitFrame[unitFrame] = hooks
+	for _, spec in ipairs({ { "UpdateAnchors", "anchors" }, { "ApplyFrameOptions", "options" } }) do
+		local methodName, group = spec[1], spec[2]
+		if not hooks[methodName] and Method(unitFrame, methodName) then
+			local ok = pcall(hooksecurefunc, unitFrame, methodName, function(frame)
+				PvPTogether:OnNativeNameplateLayout(frame, group)
+			end)
+			hooks[methodName] = ok
+		end
+	end
+	return hooks.UpdateAnchors == true and hooks.ApplyFrameOptions == true
+end
 
-	-- Always apply our per-type override directly for already-created frames.
-	self:ApplyPerTypeStyleToNameplateFrame(namePlateFrameBase)
+function PvPTogether:TrackNameplateFrame(frame)
+	if not self:CanAccessNameplateFrame(frame) then
+		return false
+	end
+	self.trackedNamePlateFrames[frame] = true
 	return true
 end
 
-function PvPTogether:ReapplyStyleForUnitToken(unitToken)
-	if not IsNonSecretNonEmptyString(unitToken) then
-		return false
-	end
-	if not (C_NamePlate and type(C_NamePlate.GetNamePlateForUnit) == "function") then
-		return false
-	end
-
-	local okFrame, namePlateFrameBase = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
-	if not okFrame or not namePlateFrameBase then
-		return false
-	end
-
-	return self:ReapplyStyleForNameplateFrame(namePlateFrameBase)
-end
-
-function PvPTogether:ReapplyStyleForAnyUnitToken(unitToken)
-	if not IsNonSecretNonEmptyString(unitToken) then
-		return false
-	end
-	if not (C_NamePlate and type(C_NamePlate.GetNamePlateForUnit) == "function") then
-		return false
-	end
-
-	local okFrame, namePlateFrameBase = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
-	if not okFrame or not namePlateFrameBase then
-		return false
-	end
-
-	return self:ReapplyStyleForNameplateFrame(namePlateFrameBase)
-end
-
-function PvPTogether:RefreshVisibleNameplateStyles()
-	if not self.isEnabled or self:IsNameplateAugmentationBlockedInCurrentContext() then
-		return
-	end
-
-	local refreshedByFrame = {}
-	ForEachVisibleNameplate(function(namePlateFrameBase)
-		if CanMutateFrame(namePlateFrameBase) then
-			self:TrackNameplateFrame(namePlateFrameBase)
-			self:ReapplyStyleForNameplateFrame(namePlateFrameBase)
-			refreshedByFrame[namePlateFrameBase] = true
-		end
-	end)
-
-	if C_NamePlate and type(C_NamePlate.GetNamePlateForUnit) == "function" then
-		ForEachVisibleNameplateToken(function(unitToken)
-			local okFrame, namePlateFrameBase = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
-			if okFrame and namePlateFrameBase and not refreshedByFrame[namePlateFrameBase] then
-				self:TrackNameplateFrame(namePlateFrameBase)
-				self:ReapplyStyleForNameplateFrame(namePlateFrameBase)
-			end
-		end)
+function PvPTogether:ForEachTrackedNameplateFrame(callback)
+	for frame in pairs(self.trackedNamePlateFrames) do
+		callback(frame)
 	end
 end
 
-function PvPTogether:ApplyPerTypeStyleToNameplateFrame(namePlateFrameBase)
+local function ReleaseState(addon, state)
+	if addon.nameplateStateByUnitFrame[state.unitFrame] == state then
+		addon.nameplateStateByUnitFrame[state.unitFrame] = nil
+	end
+	if addon.nameplateStateByFrame[state.frame] == state then
+		addon.nameplateStateByFrame[state.frame] = nil
+		addon.trackedNamePlateFrames[state.frame] = nil
+	end
+	if addon.nameplateFrameByUnitToken[state.token] == state.frame then
+		addon.nameplateFrameByUnitToken[state.token] = nil
+	end
+end
+
+function PvPTogether:ReapplyStyleForNameplateFrame(frame)
 	if not self.isEnabled then
-		return
+		return false
 	end
-	if self:IsNameplateAugmentationBlockedInCurrentContext() then
-		return
+	if not self:CanAccessValue(frame) or frame == nil then
+		return false
 	end
-	if not CanMutateFrame(namePlateFrameBase) then
-		return
+	local state = self.nameplateStateByFrame[frame]
+	if state and not self:HideBorderTintForUnitFrame(state.unitFrame) then
+		self.pendingNameplateResetAfterCombat = true
+		return false
 	end
-	self:TrackNameplateFrame(namePlateFrameBase)
-
-	local unitFrame = namePlateFrameBase.UnitFrame
-	if not CanMutateFrame(unitFrame) then
-		return
+	if not self:CanAccessNameplateFrame(frame) then
+		return false
 	end
-
-	local unitKind = ResolveUnitKind(namePlateFrameBase)
-	self:ApplyBorderTintForUnitFrame(unitFrame, unitKind)
-	if not unitKind then
-		return
+	local token = LiveUnit(frame)
+	local unitFrame = Child(frame, "UnitFrame")
+	if not token or not unitFrame then
+		return false
 	end
-
-	local styleValue = self:GetConfiguredStyleForUnitKind(unitKind)
-	if not self:IsNameplateStyle(styleValue) then
-		return
+	local previousOwner = self.nameplateStateByUnitFrame[unitFrame]
+	if previousOwner and previousOwner ~= state then
+		local hidden = self:HideBorderTintForUnitFrame(unitFrame)
+		local restored = Restore(previousOwner)
+		if not hidden or not restored then
+			self.pendingNameplateResetAfterCombat = true
+			return false
+		end
+		ReleaseState(self, previousOwner)
 	end
-
-	local setupOptions, scaleData = BuildSetupOptionsForStyle(styleValue)
-	if not setupOptions or not scaleData then
-		return
+	if state then
+		if not Restore(state) then
+			self.pendingNameplateResetAfterCombat = true
+			return false
+		end
+		if state.token ~= token and self.nameplateFrameByUnitToken[state.token] == frame then
+			self.nameplateFrameByUnitToken[state.token] = nil
+		end
+		if state.unitFrame ~= unitFrame then
+			self.nameplateStateByUnitFrame[state.unitFrame] = nil
+		end
+	else
+		state = { journal = {} }
+		self.nameplateStateByFrame[frame] = state
 	end
-
-	ApplySetupOptionsVisuals(unitFrame, setupOptions)
-	ApplyCustomAnchors(unitFrame, setupOptions)
-	ApplyCalculatedFrameSize(namePlateFrameBase, styleValue, scaleData, setupOptions)
+	state.token, state.unitFrame, state.frame, state.removed = token, unitFrame, frame, false
+	self.nameplateStateByUnitFrame[unitFrame] = state
+	self.nameplateFrameByUnitToken[token] = frame
+	self:TrackNameplateFrame(frame)
+	local unitKind = self:ResolveNameplateUnitKind(token)
+	if not unitKind or unitKind == "npc" then
+		return false
+	end
+	if not self:InstallNameplateFrameHooks(unitFrame) then
+		self:RecordDiagnostic("hooks-unavailable")
+		return false
+	end
+	local tinted = self:ApplyBorderTintForUnitFrame(unitFrame, unitKind)
+	local capabilities = self:GetNameplateCapabilities()
+	local configured = self:GetOption(unitKind .. "Style")
+	if configured == nil or not capabilities.styleOverrides then
+		return tinted
+	end
+	local style = self:GetConfiguredStyleForUnitKind(unitKind)
+	if style == self:GetCurrentGlobalNameplateStyle() then
+		return tinted
+	end
+	local plan = BuildPlan(unitFrame, style)
+	if not plan then
+		self:RecordDiagnostic("layout-unavailable")
+		return false
+	end
+	local applied = Execute(state, plan)
+	if not applied then
+		self.pendingNameplateRefreshAfterCombat = true
+	end
+	return applied
 end
+
+function PvPTogether:ReapplyStyleForUnitToken(token)
+	if not IsToken(token) then
+		return false
+	end
+	local getPlate = Field(C_NamePlate, "GetNamePlateForUnit")
+	if type(getPlate) ~= "function" then
+		return false
+	end
+	local ok, frame = pcall(getPlate, token, false)
+	return ok and self:CanAccessNameplateFrame(frame) and self:ReapplyStyleForNameplateFrame(frame) or false
+end
+
+PvPTogether.ReapplyStyleForAnyUnitToken = PvPTogether.ReapplyStyleForUnitToken
+PvPTogether.ApplyPerTypeStyleToNameplateFrame = PvPTogether.ReapplyStyleForNameplateFrame
 
 function PvPTogether:ApplyPerTypeStyleGeometryToUnitFrame(unitFrame)
-	if not self.isEnabled then
-		return
+	if not self:CanAccessNameplateFrame(unitFrame) then
+		return false
 	end
-	if self:IsNameplateAugmentationBlockedInCurrentContext() then
-		return
-	end
-	if not CanMutateFrame(unitFrame) then
-		return
-	end
-
-	local namePlateFrameBase = GetParentFrameSafely(unitFrame)
-	if not CanMutateFrame(namePlateFrameBase) then
-		return
-	end
-
-	local unitKind = ResolveUnitKindFromUnitFrame(unitFrame)
-	self:ApplyBorderTintForUnitFrame(unitFrame, unitKind)
-	if not unitKind then
-		return
-	end
-
-	local styleValue = self:GetConfiguredStyleForUnitKind(unitKind)
-	if not self:IsNameplateStyle(styleValue) then
-		return
-	end
-
-	local setupOptions, scaleData = BuildSetupOptionsForStyle(styleValue)
-	if not setupOptions or not scaleData then
-		return
-	end
-
-	ApplySetupOptionsVisuals(unitFrame, setupOptions)
-	ApplyCustomAnchors(unitFrame, setupOptions)
-	ApplyCalculatedFrameSize(namePlateFrameBase, styleValue, scaleData, setupOptions)
+	local ok, parent = Call(unitFrame, "GetParent")
+	return ok and self:ReapplyStyleForNameplateFrame(parent) or false
 end
 
-function PvPTogether:ReapplyAllNameplateStyles()
-	if not self.isEnabled then
-		return {
-			inCombat = false,
-			blocked = false,
-			tracked = 0,
-			tokens = 0,
-			fallback = 0,
-		}
-	end
-
-	if self:IsNameplateAugmentationBlockedInCurrentContext() then
-		self.pendingNameplateRefreshAfterCombat = false
-		return {
-			inCombat = false,
-			blocked = true,
-			tracked = 0,
-			tokens = 0,
-			fallback = 0,
-		}
-	end
-
-	local inCombat = self:IsInCombatLockdown()
-	self.pendingNameplateRefreshAfterCombat = false
-
-	local refreshedByFrame = {}
-	local stats = {
-		inCombat = inCombat and true or false,
-		blocked = false,
-		tracked = 0,
-		tokens = 0,
-		fallback = 0,
-	}
-
-	self:ForEachTrackedNameplateFrame(function(namePlateFrameBase)
-		if CanMutateFrame(namePlateFrameBase) then
-			local unitToken = namePlateFrameBase.GetUnit and namePlateFrameBase:GetUnit() or nil
-			if IsNonSecretNonEmptyString(unitToken) then
-				self:ReapplyStyleForNameplateFrame(namePlateFrameBase)
-				if not refreshedByFrame[namePlateFrameBase] then
-					refreshedByFrame[namePlateFrameBase] = true
-					stats.tracked = stats.tracked + 1
-				end
-			end
-		end
-	end)
-
-	ForEachVisibleNameplateToken(function(unitToken)
-		local okFrame, namePlateFrameBase = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
-		if okFrame and namePlateFrameBase then
-			self:TrackNameplateFrame(namePlateFrameBase)
-			self:ReapplyStyleForNameplateFrame(namePlateFrameBase)
-			if not refreshedByFrame[namePlateFrameBase] then
-				refreshedByFrame[namePlateFrameBase] = true
-				stats.tokens = stats.tokens + 1
-			end
-		end
-	end)
-
-	ForEachVisibleNameplate(function(namePlateFrameBase)
-		if not refreshedByFrame[namePlateFrameBase] then
-			self:ReapplyStyleForNameplateFrame(namePlateFrameBase)
-			stats.fallback = stats.fallback + 1
-		end
-	end)
-
-	-- Apply one lightweight deferred pass to win races against Blizzard's immediate follow-up anchor updates.
-	if C_Timer and type(C_Timer.After) == "function" then
-		local refreshGeneration = (self.nameplateReapplyGeneration or 0) + 1
-		self.nameplateReapplyGeneration = refreshGeneration
-		C_Timer.After(0.05, function()
-			if self.nameplateReapplyGeneration ~= refreshGeneration then
-				return
-			end
-			if not self.isEnabled then
-				return
-			end
-
-			ForEachVisibleNameplateToken(function(unitToken)
-				self:ReapplyStyleForUnitToken(unitToken)
-			end)
-		end)
-	end
-
-	return stats
-end
-
-function PvPTogether:StartCombatNameplateRefreshTicker()
-	if self.combatNameplateRefreshTicker then
+function PvPTogether:HandleNameplateRemoved(token)
+	if not IsToken(token) then
 		return
 	end
-	if not (C_Timer and type(C_Timer.NewTicker) == "function") then
+	local frame = self.nameplateFrameByUnitToken[token]
+	self.nameplateFrameByUnitToken[token] = nil
+	if not frame then
 		return
 	end
-
-	self.combatNameplateRefreshTicker = C_Timer.NewTicker(0.3, function()
-		if not self.isEnabled then
-			return
-		end
-		self:RefreshVisibleNameplateStyles()
-	end)
-end
-
-function PvPTogether:StopCombatNameplateRefreshTicker()
-	if not self.combatNameplateRefreshTicker then
+	local state = self.nameplateStateByFrame[frame]
+	if not state or state.token ~= token then
 		return
 	end
-
-	local ticker = self.combatNameplateRefreshTicker
-	self.combatNameplateRefreshTicker = nil
-	if ticker and ticker.Cancel then
-		ticker:Cancel()
-	end
-end
-
-function PvPTogether:ScheduleReapplyAllNameplateStyles(delaySeconds)
-	if not self.isEnabled then
-		return
-	end
-
-	local delay = self:SafeToNumber(delaySeconds) or 0
-	if delay < 0 then
-		delay = 0
-	end
-
-	if not (C_Timer and type(C_Timer.After) == "function") then
-		self:ReapplyAllNameplateStyles()
-		return
-	end
-
-	local generation = (self.nameplateScheduledReapplyGeneration or 0) + 1
-	self.nameplateScheduledReapplyGeneration = generation
-	local delays = {
-		delay,
-		0.05,
-		0.12,
-		0.25,
-	}
-
-	for _, scheduledDelay in ipairs(delays) do
-		C_Timer.After(scheduledDelay, function()
-			if self.nameplateScheduledReapplyGeneration ~= generation then
-				return
-			end
-			if not self.isEnabled then
-				return
-			end
-			self:ReapplyAllNameplateStyles()
-		end)
+	state.removed = true
+	local hidden = self:HideBorderTintForUnitFrame(state.unitFrame)
+	if Restore(state) and hidden then
+		ReleaseState(self, state)
+	else
+		self.pendingNameplateResetAfterCombat = true
 	end
 end
 
 function PvPTogether:ResetAllNameplateStylesToBlizzard()
-	if self:IsNameplateAugmentationBlockedInCurrentContext() then
-		self.pendingNameplateResetAfterCombat = false
+	local complete = true
+	for frame, state in pairs(self.nameplateStateByFrame) do
+		local restored = Restore(state)
+		local hidden = self:HideBorderTintForUnitFrame(state.unitFrame)
+		if restored and hidden then
+			ReleaseState(self, state)
+		else
+			complete = false
+		end
+	end
+	if not self:HideAllBorderTintOverrides() then
+		complete = false
+	end
+	self.pendingNameplateResetAfterCombat = not complete
+	return complete
+end
+
+function PvPTogether:ReapplyAllNameplateStyles()
+	local stats = { inCombat = self:IsInCombatLockdown(), blocked = false, tracked = 0, tokens = 0, fallback = 0 }
+	if not self.isEnabled then
+		return stats
+	end
+	stats.blocked = self:IsNameplateAugmentationBlockedInCurrentContext()
+	if self.pendingNameplateResetAfterCombat then
+		self:ResetAllNameplateStylesToBlizzard()
+	end
+	self.pendingNameplateRefreshAfterCombat = false
+	local getPlates = Field(C_NamePlate, "GetNamePlates")
+	if type(getPlates) ~= "function" then
+		return stats
+	end
+	local ok, frames = pcall(getPlates, false)
+	if not ok or not self:CanAccessTable(frames) then
+		return stats
+	end
+	for _, frame in pairs(frames) do
+		if self:ReapplyStyleForNameplateFrame(frame) then
+			stats.tracked = stats.tracked + 1
+		end
+	end
+	return stats
+end
+PvPTogether.RefreshVisibleNameplateStyles = PvPTogether.ReapplyAllNameplateStyles
+
+function PvPTogether:ScheduleReapplyAllNameplateStyles(delay, frame)
+	if not self.isEnabled then
 		return
 	end
-
-	if self:IsInCombatLockdown() then
-		self.pendingNameplateResetAfterCombat = true
+	if frame then
+		self.nameplatePendingFrames = self.nameplatePendingFrames or {}
+		self.nameplatePendingFrames[frame] = true
+	else
+		self.nameplateFullRefreshPending = true
+	end
+	if self.nameplateRefreshScheduled then
 		return
 	end
-
-	self.pendingNameplateResetAfterCombat = false
-	self:HideAllBorderTintOverrides()
-
-	if type(NamePlateDriverFrame) == "table" and type(NamePlateDriverFrame.UpdateNamePlateOptions) == "function" then
-		pcall(NamePlateDriverFrame.UpdateNamePlateOptions, NamePlateDriverFrame)
+	local after = Field(C_Timer, "After")
+	if type(after) ~= "function" then
+		self:ReapplyAllNameplateStyles()
+		return
 	end
+	self.nameplateRefreshScheduled = true
+	local generation = self.nameplateScheduledReapplyGeneration or 0
+	after(math.max(0, self:SafeToNumber(delay) or 0), function()
+		if PvPTogether.nameplateScheduledReapplyGeneration ~= generation then
+			return
+		end
+		PvPTogether.nameplateRefreshScheduled = false
+		local frames, full = PvPTogether.nameplatePendingFrames, PvPTogether.nameplateFullRefreshPending
+		PvPTogether.nameplatePendingFrames, PvPTogether.nameplateFullRefreshPending = nil, false
+		if PvPTogether.isEnabled then
+			if full then
+				PvPTogether:ReapplyAllNameplateStyles()
+			else
+				for pending in pairs(frames or {}) do
+					PvPTogether:ReapplyStyleForNameplateFrame(pending)
+				end
+			end
+		end
+	end)
 end
 
 function PvPTogether:TryInstallNameplateHooks()
-	if self.nameplateHooksInstalled then
-		return true
+	-- Mixins were copied into live frames before ADDON_LOADED; hook each actual
+	-- unit frame on acquisition, and retry individual missing hooks later.
+	self.nameplateHooksInstalled = type(hooksecurefunc) == "function" and self:GetNameplateCapabilities().borderTint
+	return self.nameplateHooksInstalled
+end
+
+function PvPTogether:HandleNameplateContextChange()
+	if self.RefreshOptionsWindow then
+		self:RefreshOptionsWindow()
 	end
-
-	if (not NamePlateDriverMixin or not NamePlateBaseMixin) and type(UIParentLoadAddOn) == "function" then
-		pcall(UIParentLoadAddOn, "Blizzard_NamePlates")
+	if self.pendingNameplateResetAfterCombat then
+		self:ResetAllNameplateStylesToBlizzard()
 	end
-
-	-- Safe hook pattern: hook Blizzard paths and reapply only on mutable, non-forbidden frames.
-	if
-		not self.nameplateApplyFrameOptionsHookInstalled
-		and type(hooksecurefunc) == "function"
-		and type(NamePlateBaseMixin) == "table"
-		and type(NamePlateBaseMixin.ApplyFrameOptions) == "function"
-	then
-		hooksecurefunc(NamePlateBaseMixin, "ApplyFrameOptions", function(namePlateFrameBase)
-			if not PvPTogether.isEnabled then
-				return
-			end
-			if PvPTogether:IsNameplateAugmentationBlockedInCurrentContext() then
-				return
-			end
-
-			PvPTogether:ReapplyStyleForNameplateFrame(namePlateFrameBase)
-			PvPTogether:ScheduleReapplyAllNameplateStyles(0)
-		end)
-		self.nameplateApplyFrameOptionsHookInstalled = true
+	if self.isEnabled then
+		self:ScheduleReapplyAllNameplateStyles(0)
 	end
-
-	if
-		not self.nameplateOnUnitSetHookInstalled
-		and type(hooksecurefunc) == "function"
-		and type(NamePlateUnitFrameMixin) == "table"
-		and type(NamePlateUnitFrameMixin.OnUnitSet) == "function"
-	then
-		hooksecurefunc(NamePlateUnitFrameMixin, "OnUnitSet", function(unitFrame)
-			if not PvPTogether.isEnabled then
-				return
-			end
-			if PvPTogether:IsNameplateAugmentationBlockedInCurrentContext() then
-				return
-			end
-			if not CanMutateFrame(unitFrame) then
-				return
-			end
-
-			local parentFrame = GetParentFrameSafely(unitFrame)
-			if parentFrame then
-				PvPTogether:ReapplyStyleForNameplateFrame(parentFrame)
-				PvPTogether:ScheduleReapplyAllNameplateStyles(0)
-			end
-		end)
-		self.nameplateOnUnitSetHookInstalled = true
-	end
-
-	if
-		not self.nameplateUpdateAnchorsHookInstalled
-		and type(hooksecurefunc) == "function"
-		and type(NamePlateUnitFrameMixin) == "table"
-		and type(NamePlateUnitFrameMixin.UpdateAnchors) == "function"
-	then
-		hooksecurefunc(NamePlateUnitFrameMixin, "UpdateAnchors", function(unitFrame)
-			if not PvPTogether.isEnabled then
-				return
-			end
-			if PvPTogether:IsNameplateAugmentationBlockedInCurrentContext() then
-				return
-			end
-
-			PvPTogether:ApplyPerTypeStyleGeometryToUnitFrame(unitFrame)
-		end)
-		self.nameplateUpdateAnchorsHookInstalled = true
-	end
-
-	if
-		not self.nameplateOptionsHookInstalled
-		and type(hooksecurefunc) == "function"
-		and type(NamePlateDriverMixin) == "table"
-		and type(NamePlateDriverMixin.UpdateNamePlateOptions) == "function"
-	then
-		hooksecurefunc(NamePlateDriverMixin, "UpdateNamePlateOptions", function()
-			if not PvPTogether.isEnabled then
-				return
-			end
-			if PvPTogether:IsNameplateAugmentationBlockedInCurrentContext() then
-				return
-			end
-
-			PvPTogether:ScheduleReapplyAllNameplateStyles(0)
-		end)
-		self.nameplateOptionsHookInstalled = true
-	end
-
-	self.nameplateHooksInstalled = true
-	return true
 end
 
 function PvPTogether:EnsureNameplateEventFrame()
 	if self.nameplateEventFrame then
 		return self.nameplateEventFrame
 	end
-
 	local frame = CreateFrame("Frame")
-	frame:SetScript("OnEvent", function(_, eventName, ...)
-		if eventName == "ADDON_LOADED" then
-			local loadedAddon = ...
-			if loadedAddon == "Blizzard_NamePlates" then
-				PvPTogether:TryInstallNameplateHooks()
-				if PvPTogether.isEnabled then
-					PvPTogether:HandleNameplateContextChange()
-				end
-			end
-		elseif eventName == "NAME_PLATE_UNIT_ADDED" then
-			if not PvPTogether.isEnabled then
-				return
-			end
-
-			local unitToken = ...
-			if not IsNonSecretNonEmptyString(unitToken) then
-				return
-			end
-
-			if PvPTogether:IsNameplateAugmentationBlockedInCurrentContext() then
-				return
-			end
-
-			PvPTogether:ReapplyStyleForUnitToken(unitToken)
-			PvPTogether:ScheduleReapplyAllNameplateStyles(0)
-		elseif eventName == "PLAYER_ENTERING_WORLD" then
-			PvPTogether:HandleNameplateContextChange()
-		elseif eventName == "ZONE_CHANGED_NEW_AREA" then
-			PvPTogether:HandleNameplateContextChange()
-		elseif eventName == "CVAR_UPDATE" then
-			if not PvPTogether.isEnabled then
-				return
-			end
-			if PvPTogether:IsNameplateAugmentationBlockedInCurrentContext() then
-				return
-			end
-
-			local cvarName = ...
-			local cvarText = PvPTogether:SafeToString(cvarName, ""):lower()
-			if cvarText:find("nameplate", 1, true) then
-				PvPTogether:ReapplyAllNameplateStyles()
-			end
-			elseif
-				eventName == "PLAYER_TARGET_CHANGED"
-				or eventName == "PLAYER_FOCUS_CHANGED"
-				or eventName == "UPDATE_MOUSEOVER_UNIT"
-			then
-			if not PvPTogether.isEnabled then
-				return
-			end
-			if PvPTogether:IsNameplateAugmentationBlockedInCurrentContext() then
-				return
-			end
-
-				if eventName == "PLAYER_TARGET_CHANGED" then
-					PvPTogether:ReapplyStyleForAnyUnitToken("target")
-				elseif eventName == "PLAYER_FOCUS_CHANGED" then
-					PvPTogether:ReapplyStyleForAnyUnitToken("focus")
-				elseif eventName == "UPDATE_MOUSEOVER_UNIT" then
-					PvPTogether:ReapplyStyleForAnyUnitToken("mouseover")
-				end
-
-				PvPTogether:RefreshVisibleNameplateStyles()
+	frame:SetScript("OnEvent", function(_, event, ...)
+		if event == "NAME_PLATE_UNIT_REMOVED" then
+			PvPTogether:HandleNameplateRemoved(...)
+		elseif event == "NAME_PLATE_UNIT_ADDED" then
+			if PvPTogether.isEnabled then
+				PvPTogether:ReapplyStyleForUnitToken(...)
 				PvPTogether:ScheduleReapplyAllNameplateStyles(0)
-		elseif eventName == "GROUP_ROSTER_UPDATE" then
-			if not PvPTogether.isEnabled then
-				return
 			end
-			if PvPTogether:IsNameplateAugmentationBlockedInCurrentContext() then
-				return
+		elseif event == "CVAR_UPDATE" then
+			local name = ...
+			if IsToken(name) and name:lower():find("nameplate", 1, true) then
+				if PvPTogether.RefreshOptionsWindow then
+					PvPTogether:RefreshOptionsWindow()
+				end
+				PvPTogether:ScheduleReapplyAllNameplateStyles(0)
 			end
-			PvPTogether:ReapplyAllNameplateStyles()
-			PvPTogether:ScheduleReapplyAllNameplateStyles(0.05)
-		elseif eventName == "PLAYER_REGEN_ENABLED" then
-			PvPTogether:StopCombatNameplateRefreshTicker()
-
-			if PvPTogether.pendingNameplateResetAfterCombat then
-				PvPTogether:ResetAllNameplateStylesToBlizzard()
-			end
-
-			if PvPTogether.pendingNameplateRefreshAfterCombat and PvPTogether.isEnabled then
+		elseif event == "ADDON_LOADED" then
+			local name = ...
+			if IsToken(name) and name == "Blizzard_NamePlates" then
+				PvPTogether:TryInstallNameplateHooks()
 				PvPTogether:HandleNameplateContextChange()
 			end
-		elseif eventName == "PLAYER_REGEN_DISABLED" then
-			if not PvPTogether.isEnabled then
-				return
-			end
-			PvPTogether:StartCombatNameplateRefreshTicker()
-			PvPTogether:RefreshVisibleNameplateStyles()
+		else
+			PvPTogether:HandleNameplateContextChange()
 		end
 	end)
-
+	-- Keep lifecycle/restriction events while disabled so deferred cleanup can finish.
+	for _, event in ipairs({
+		"ADDON_LOADED",
+		"NAME_PLATE_UNIT_ADDED",
+		"NAME_PLATE_UNIT_REMOVED",
+		"PLAYER_ENTERING_WORLD",
+		"ZONE_CHANGED_NEW_AREA",
+		"CVAR_UPDATE",
+		"GROUP_ROSTER_UPDATE",
+		"UNIT_FACTION",
+		"PLAYER_TARGET_CHANGED",
+		"PLAYER_REGEN_ENABLED",
+		"PLAYER_REGEN_DISABLED",
+		"ENCOUNTER_END",
+		"CHALLENGE_MODE_COMPLETED",
+		"CHALLENGE_MODE_RESET",
+	}) do
+		pcall(frame.RegisterEvent, frame, event)
+	end
+	if type(Field(C_RestrictedActions, "GetAddOnRestrictionState")) == "function" then
+		pcall(frame.RegisterEvent, frame, "ADDON_RESTRICTION_STATE_CHANGED")
+	end
 	self.nameplateEventFrame = frame
 	return frame
 end
 
+local function InvalidateDeferred(addon)
+	addon.nameplateScheduledReapplyGeneration = (addon.nameplateScheduledReapplyGeneration or 0) + 1
+	addon.nameplateRefreshScheduled = false
+	addon.nameplatePendingFrames, addon.nameplateFullRefreshPending = nil, false
+	addon.pendingNameplateRefreshAfterCombat = false
+end
+
 function PvPTogether:EnableNameplateModule()
-	local frame = self:EnsureNameplateEventFrame()
-
-	frame:RegisterEvent("ADDON_LOADED")
-	frame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
-	frame:RegisterEvent("PLAYER_ENTERING_WORLD")
-	frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
-	frame:RegisterEvent("CVAR_UPDATE")
-	frame:RegisterEvent("PLAYER_TARGET_CHANGED")
-	frame:RegisterEvent("PLAYER_FOCUS_CHANGED")
-	frame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
-	frame:RegisterEvent("GROUP_ROSTER_UPDATE")
-	frame:RegisterEvent("PLAYER_REGEN_ENABLED")
-	frame:RegisterEvent("PLAYER_REGEN_DISABLED")
-
+	InvalidateDeferred(self)
+	self:EnsureNameplateEventFrame()
 	self:TryInstallNameplateHooks()
 	self:HandleNameplateContextChange()
-	if self:IsInCombatLockdown() then
-		self:StartCombatNameplateRefreshTicker()
-	end
 end
 
 function PvPTogether:DisableNameplateModule()
-	if self.nameplateEventFrame then
-		self.nameplateEventFrame:UnregisterEvent("NAME_PLATE_UNIT_ADDED")
-		self.nameplateEventFrame:UnregisterEvent("PLAYER_ENTERING_WORLD")
-		self.nameplateEventFrame:UnregisterEvent("ZONE_CHANGED_NEW_AREA")
-		self.nameplateEventFrame:UnregisterEvent("CVAR_UPDATE")
-		self.nameplateEventFrame:UnregisterEvent("PLAYER_TARGET_CHANGED")
-		self.nameplateEventFrame:UnregisterEvent("PLAYER_FOCUS_CHANGED")
-		self.nameplateEventFrame:UnregisterEvent("UPDATE_MOUSEOVER_UNIT")
-		self.nameplateEventFrame:UnregisterEvent("GROUP_ROSTER_UPDATE")
-		self.nameplateEventFrame:UnregisterEvent("PLAYER_REGEN_DISABLED")
-		-- Keep PLAYER_REGEN_ENABLED in case a deferred reset is pending.
-	end
-
-	self:StopCombatNameplateRefreshTicker()
-	self.pendingNameplateRefreshAfterCombat = false
+	InvalidateDeferred(self)
 	self:ResetAllNameplateStylesToBlizzard()
 end
