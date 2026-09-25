@@ -11,37 +11,6 @@ local raw_canaccesstable = type(canaccesstable) == "function" and canaccesstable
 
 PvPTogether.addonName = addonName or "PvPTogether"
 
-local STYLE_MODERN = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Modern or 0
-local STYLE_THIN = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Thin or 1
-local STYLE_BLOCK = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Block or 2
-local STYLE_HEALTH_FOCUS = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.HealthFocus or 3
-local STYLE_CAST_FOCUS = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.CastFocus or 4
-local STYLE_LEGACY = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Legacy or 5
-local STYLE_CLASSIC = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Classic
-
--- Rendering capability is separate from the choices offered by this client.
-local supportedOverrideStyles = {
-	[STYLE_MODERN] = true,
-	[STYLE_THIN] = true,
-	[STYLE_BLOCK] = true,
-	[STYLE_HEALTH_FOCUS] = true,
-	[STYLE_CAST_FOCUS] = true,
-	[STYLE_LEGACY] = true,
-}
-PvPTogether.nameplateStyleOrder = {}
-
-PvPTogether.nameplateStyleLabels = {
-	[STYLE_MODERN] = UNIT_NAMEPLATES_STYLE_MODERN or "Modern",
-	[STYLE_THIN] = UNIT_NAMEPLATES_STYLE_THIN or "Thin",
-	[STYLE_BLOCK] = UNIT_NAMEPLATES_STYLE_BLOCK or "Block",
-	[STYLE_HEALTH_FOCUS] = UNIT_NAMEPLATES_STYLE_HEALTH_FOCUS or "Health Focus",
-	[STYLE_CAST_FOCUS] = UNIT_NAMEPLATES_STYLE_CAST_FOCUS or "Cast Focus",
-	[STYLE_LEGACY] = UNIT_NAMEPLATES_STYLE_LEGACY or "Legacy",
-}
-if STYLE_CLASSIC then
-	PvPTogether.nameplateStyleLabels[STYLE_CLASSIC] = UNIT_NAMEPLATES_STYLE_CLASSIC or "Classic"
-end
-
 PvPTogether.DEFAULTS = {
 	enabled = true,
 	partyMemberBorderEnabled = false,
@@ -62,8 +31,6 @@ PvPTogether.DEFAULTS = {
 		g = 0.0,
 		b = 0.0,
 	},
-	styleSeeded = false,
-	partyMemberStyleSeeded = false,
 }
 
 PvPTogether.isInitialized = PvPTogether.isInitialized or false
@@ -248,191 +215,6 @@ function PvPTogether:IsInCombatLockdown()
 	return inCombat ~= nil and inCombat ~= false
 end
 
-local function GetRegisteredStyleProvider(addon)
-	-- Older clients keep the options callback on the registered dropdown.
-	-- Inspect its data without constructing, showing, or changing Settings UI.
-	local function PlainField(object, key)
-		if addon:CanAccessTable(object) then
-			local value = rawget(object, key)
-			if addon:CanAccessValue(value) then
-				return value
-			end
-		end
-	end
-	local forbidden = addon:SafeGetField(SettingsPanel, "IsForbidden")
-	if type(forbidden) ~= "function" then
-		return nil
-	end
-	local checked, isForbidden = pcall(forbidden, SettingsPanel)
-	if not checked or addon:SafeToBoolean(isForbidden) ~= false then
-		return nil
-	end
-	local getSetting = addon:SafeGetField(Settings, "GetSetting")
-	local getCategory = addon:SafeGetField(Settings, "GetCategory")
-	local categoryID = addon:SafeGetField(Settings, "NAMEPLATE_OPTIONS_CATEGORY_ID")
-	local getLayout = addon:SafeGetField(SettingsPanel, "GetLayout")
-	if
-		type(getSetting) ~= "function"
-		or type(getCategory) ~= "function"
-		or type(getLayout) ~= "function"
-		or (type(categoryID) ~= "number" and type(categoryID) ~= "string")
-	then
-		return nil
-	end
-	local gotSetting, setting = pcall(getSetting, "nameplateStyle")
-	local gotCategory, category = pcall(getCategory, categoryID)
-	if not gotSetting or not addon:CanAccessTable(setting) or not gotCategory or not addon:CanAccessTable(category) then
-		return nil
-	end
-	local gotLayout, layout = pcall(getLayout, SettingsPanel, category)
-	local initializers = gotLayout and PlainField(layout, "initializers") or nil
-	if not addon:CanAccessTable(initializers) then
-		return nil
-	end
-	for index = 1, 128 do
-		local initializer = PlainField(initializers, index)
-		if not initializer then
-			return nil
-		end
-		local data = PlainField(initializer, "data")
-		if PlainField(data, "setting") == setting then
-			return PlainField(data, "options")
-		end
-	end
-end
-
-function PvPTogether:RefreshNameplateStyleOptions()
-	self.nameplateStyleOrder = {}
-	self.nameplateStyleOptionsAvailable = false
-	-- The same provider supplies Blizzard's global nameplateStyle dropdown.
-	-- It creates fresh option data; never invoke the settings setup/mutation path.
-	local provider, readable = self:SafeGetField(NameplatesOverrides, "GetNameplateStyleOptions")
-	if provider == nil and ((self:CanAccessValue(NameplatesOverrides) and NameplatesOverrides == nil) or readable) then
-		provider = GetRegisteredStyleProvider(self)
-	end
-	if type(provider) ~= "function" then
-		return false
-	end
-	local ok, options = pcall(provider)
-	if not ok or not self:CanAccessTable(options) then
-		return false
-	end
-	local order, labels, seen = {}, {}, {}
-	-- Read only bounded, access-checked plain fields; do not invoke row or array
-	-- metamethods. Unknown renderers (including native-only Classic) are omitted.
-	for index = 1, 32 do
-		local entry = rawget(options, index)
-		if not self:CanAccessValue(entry) then
-			return false
-		end
-		if entry == nil then
-			self.nameplateStyleOrder = order
-			for value, label in pairs(labels) do
-				self.nameplateStyleLabels[value] = label
-			end
-			self.nameplateStyleOptionsAvailable = true
-			return true
-		end
-		if not self:CanAccessTable(entry) then
-			return false
-		end
-		local value = self:SafeToNumber(rawget(entry, "value"))
-		local label = rawget(entry, "label")
-		if not self:CanAccessValue(label) or type(label) ~= "string" or label == "" then
-			return false
-		end
-		if value == nil or value % 1 ~= 0 then
-			return false
-		end
-		if supportedOverrideStyles[value] and not seen[value] then
-			order[#order + 1], labels[value], seen[value] = value, label, true
-		end
-	end
-	return false
-end
-
-function PvPTogether:GetCurrentGlobalNameplateStyle()
-	if C_CVar and type(C_CVar.GetCVar) == "function" then
-		local ok, rawValue = pcall(C_CVar.GetCVar, "nameplateStyle")
-		local numericStyle = ok and self:SafeToNumber(rawValue) or nil
-		if numericStyle then
-			numericStyle = math.floor(numericStyle + 0.5)
-			if self:IsGlobalNameplateStyle(numericStyle) then
-				return numericStyle
-			end
-		end
-	end
-
-	return STYLE_MODERN
-end
-
-function PvPTogether:IsNameplateStyle(value)
-	local numericStyle = self:SafeToNumber(value)
-	if numericStyle == nil then
-		return false
-	end
-	numericStyle = math.floor(numericStyle + 0.5)
-
-	for _, styleValue in ipairs(self.nameplateStyleOrder) do
-		if styleValue == numericStyle then
-			return true
-		end
-	end
-
-	return false
-end
-
-function PvPTogether:IsGlobalNameplateStyle(value)
-	local numericStyle = self:SafeToNumber(value)
-	return numericStyle ~= nil
-		and (supportedOverrideStyles[numericStyle] == true or (STYLE_CLASSIC ~= nil and numericStyle == STYLE_CLASSIC))
-end
-
-function PvPTogether:NormalizeNameplateStyle(value, fallbackStyle)
-	local fallback = self:SafeToNumber(fallbackStyle)
-	if not self:IsGlobalNameplateStyle(fallback) then
-		fallback = STYLE_MODERN
-	end
-	fallback = math.floor(fallback + 0.5)
-
-	local numericStyle = self:SafeToNumber(value)
-	if not self:IsNameplateStyle(numericStyle) then
-		return fallback
-	end
-	return math.floor(numericStyle + 0.5)
-end
-
-function PvPTogether:GetNameplateStyleLabel(styleValue)
-	local numericStyle = self:SafeToNumber(styleValue)
-	if numericStyle and self:IsGlobalNameplateStyle(numericStyle) then
-		return self.nameplateStyleLabels[numericStyle]
-	end
-	local normalizedStyle = self:NormalizeNameplateStyle(styleValue, STYLE_MODERN)
-	return self.nameplateStyleLabels[normalizedStyle] or ("Style " .. self:SafeToString(normalizedStyle, "?"))
-end
-
-function PvPTogether:GetConfiguredStyleForUnitKind(unitKind)
-	if not self.db then
-		return self:GetCurrentGlobalNameplateStyle()
-	end
-
-	local styleKey = nil
-	if unitKind == "partyMember" then
-		styleKey = "partyMemberStyle"
-	elseif unitKind == "friendlyPlayer" then
-		styleKey = "friendlyPlayerStyle"
-	elseif unitKind == "enemyPlayer" then
-		styleKey = "enemyPlayerStyle"
-	end
-
-	if not styleKey then
-		return self:GetCurrentGlobalNameplateStyle()
-	end
-
-	local configuredStyle = self.db[styleKey]
-	return self:NormalizeNameplateStyle(configuredStyle, self:GetCurrentGlobalNameplateStyle())
-end
-
 function PvPTogether:GetBorderOverrideOptionKeysForUnitKind(unitKind)
 	if unitKind == "partyMember" then
 		return "partyMemberBorderEnabled", "partyMemberBorderColor"
@@ -493,7 +275,6 @@ function PvPTogether:GetConfiguredBorderColorForUnitKind(unitKind)
 end
 
 function PvPTogether:InitializeDatabase()
-	self:RefreshNameplateStyleOptions()
 	if type(_G.PvPTogetherDBChar) ~= "table" then
 		_G.PvPTogetherDBChar = {}
 	end
@@ -501,56 +282,7 @@ function PvPTogether:InitializeDatabase()
 	self.db = _G.PvPTogetherDBChar
 	self:ApplyDefaults(self.db, self.DEFAULTS)
 
-	if self.db.styleSeeded ~= true then
-		local globalStyle = self:GetCurrentGlobalNameplateStyle()
-		-- Classic is a native-only global mode, not a per-type override. Keep
-		-- inheritance instead of persisting a style the selectors cannot offer.
-		if not self:IsNameplateStyle(globalStyle) then
-			globalStyle = nil
-		end
-		if self.db.partyMemberStyle == nil then
-			self.db.partyMemberStyle = globalStyle
-		end
-		if self.db.friendlyPlayerStyle == nil then
-			self.db.friendlyPlayerStyle = globalStyle
-		end
-		if self.db.enemyPlayerStyle == nil then
-			self.db.enemyPlayerStyle = globalStyle
-		end
-		self.db.styleSeeded = true
-	end
-
-	if self.db.partyMemberStyleSeeded ~= true then
-		if self.db.partyMemberStyle == nil and self:IsNameplateStyle(self.db.friendlyPlayerStyle) then
-			local fallbackGroupStyle =
-				self:NormalizeNameplateStyle(self.db.friendlyPlayerStyle, self:GetCurrentGlobalNameplateStyle())
-			self.db.partyMemberStyle = fallbackGroupStyle
-		end
-		self.db.partyMemberStyleSeeded = true
-	end
-
-	local fallbackStyle = self:GetCurrentGlobalNameplateStyle()
-	local function NormalizeStoredStyle(value)
-		if self:IsGlobalNameplateStyle(value) and not self:IsNameplateStyle(value) then
-			-- A load-order delay must not erase a saved choice. Until the provider
-			-- arrives it is inactive and behaves as inheritance.
-			if not self.nameplateStyleOptionsAvailable and self:SafeToNumber(value) ~= STYLE_CLASSIC then
-				return self:SafeToNumber(value)
-			end
-			return nil
-		end
-		local normalizedStyle = self:NormalizeNameplateStyle(value, fallbackStyle)
-		return self:IsNameplateStyle(normalizedStyle) and normalizedStyle or nil
-	end
-	if self.db.partyMemberStyle ~= nil then
-		self.db.partyMemberStyle = NormalizeStoredStyle(self.db.partyMemberStyle)
-	end
-	if self.db.friendlyPlayerStyle ~= nil then
-		self.db.friendlyPlayerStyle = NormalizeStoredStyle(self.db.friendlyPlayerStyle)
-	end
-	if self.db.enemyPlayerStyle ~= nil then
-		self.db.enemyPlayerStyle = NormalizeStoredStyle(self.db.enemyPlayerStyle)
-	end
+	-- Legacy style preferences remain saved but are no longer read or changed.
 	self.db.partyMemberBorderEnabled = self.db.partyMemberBorderEnabled == true
 	self.db.friendlyPlayerBorderEnabled = self.db.friendlyPlayerBorderEnabled == true
 	self.db.enemyPlayerBorderEnabled = self.db.enemyPlayerBorderEnabled == true
@@ -580,19 +312,6 @@ function PvPTogether:SetOption(optionKey, value)
 		normalizedValue = self:SafeToBoolean(value)
 		if normalizedValue == nil then
 			return false
-		end
-	elseif optionKey == "partyMemberStyle" or optionKey == "friendlyPlayerStyle" or optionKey == "enemyPlayerStyle" then
-		if value == nil then
-			normalizedValue = nil
-		else
-			if not self:IsNameplateStyle(value) then
-				return false
-			end
-			local fallbackStyle = self:GetCurrentGlobalNameplateStyle()
-			normalizedValue = self:NormalizeNameplateStyle(value, fallbackStyle)
-			if not self:IsNameplateStyle(normalizedValue) then
-				normalizedValue = nil
-			end
 		end
 	elseif
 		optionKey == "partyMemberBorderEnabled"
@@ -639,11 +358,11 @@ function PvPTogether:SetOption(optionKey, value)
 			self:Disable()
 		end
 	elseif self.isEnabled then
-		-- Coalesce slider/picker updates and let the module enforce restrictions.
-		if self.ScheduleReapplyAllNameplateStyles then
-			self:ScheduleReapplyAllNameplateStyles(0.02)
-		elseif self.ReapplyAllNameplateStyles then
-			self:ReapplyAllNameplateStyles("option:" .. optionKey)
+		-- Coalesce color updates and let the module enforce restrictions.
+		if self.ScheduleNameplateRefresh then
+			self:ScheduleNameplateRefresh(0.02)
+		elseif self.RefreshNameplates then
+			self:RefreshNameplates("option:" .. optionKey)
 		end
 	end
 	if self.RefreshOptionsWindow and self.optionsFrame then
@@ -731,7 +450,7 @@ function PvPTogether:BuildDiagnostics()
 	end
 	local capabilities = self.GetNameplateCapabilities and self:GetNameplateCapabilities() or {}
 	Add("enabled", self.isEnabled == true)
-	Add("capability.styleOverrides", capabilities.styleOverrides == true)
+	Add("layout", "Blizzard global settings")
 	Add("capability.borderTint", capabilities.borderTint == true)
 	Add("capability.reason", capabilities.reason or "none")
 	Add(
@@ -748,23 +467,11 @@ function PvPTogether:BuildDiagnostics()
 		end
 		return count
 	end
-	Add("pendingCleanup", self.pendingNameplateResetAfterCombat == true)
-	Add("pendingRefresh", self.pendingNameplateRefreshAfterCombat == true or self.nameplateRefreshScheduled == true)
-	Add("queuedPlates", Count(self.nameplatePendingFrames))
-	Add("retainedLayouts", Count(self.nameplateStateByFrame))
+	Add("pendingCleanup", self.pendingBorderCleanup == true)
+	Add("pendingRefresh", self.pendingBorderRefresh == true or self.nameplateRefreshScheduled == true)
 	Add("trackedPlates", Count(self.trackedNamePlateFrames))
 	Add("borderOverlays", Count(self.nameplateBorderTintByUnitFrame))
-	local failure = self.lastLayoutFailure
-	if failure then
-		Add("layoutFailure.step", failure.step)
-		Add("layoutFailure.property", failure.property)
-		Add("layoutFailure.stage", failure.stage)
-		Add("layoutFailure.reason", failure.reason)
-	end
-	Add("globalStyle", self:GetNameplateStyleLabel(self:GetCurrentGlobalNameplateStyle()))
 	for _, kind in ipairs({ "partyMember", "friendlyPlayer", "enemyPlayer" }) do
-		local style = self:GetOption(kind .. "Style")
-		Add(kind .. ".style", self:IsNameplateStyle(style) and self:GetNameplateStyleLabel(style) or "inherit global")
 		Add(kind .. ".border", self:IsBorderColorOverrideEnabledForUnitKind(kind))
 	end
 	for _, entry in ipairs(self:GetDiagnosticSnapshot()) do
@@ -890,9 +597,6 @@ function PvPTogether:Enable()
 	if self.EnableNameplateModule then
 		self:EnableNameplateModule()
 	end
-	if self.StartOptionsPreviewTicker then
-		self:StartOptionsPreviewTicker()
-	end
 end
 
 function PvPTogether:Disable()
@@ -903,9 +607,6 @@ function PvPTogether:Disable()
 	self.isEnabled = false
 	if self.InvalidateOptionsCallbacks then
 		self:InvalidateOptionsCallbacks()
-	end
-	if self.StopOptionsPreviewTicker then
-		self:StopOptionsPreviewTicker()
 	end
 
 	if self.DisableNameplateModule then
@@ -931,14 +632,8 @@ eventFrame:SetScript("OnEvent", function(_, eventName, ...)
 		local loadedAddonName = ...
 		if loadedAddonName == PvPTogether.addonName then
 			PvPTogether:Initialize()
-		elseif loadedAddonName == "Blizzard_SettingsDefinitions_Frame" then
-			PvPTogether:RefreshNameplateStyleOptions()
-			if PvPTogether.isEnabled and PvPTogether.ScheduleReapplyAllNameplateStyles then
-				PvPTogether:ScheduleReapplyAllNameplateStyles(0)
-			end
 		end
 	elseif eventName == "PLAYER_LOGIN" then
-		PvPTogether:RefreshNameplateStyleOptions()
 		PvPTogether.hasLoggedIn = true
 		if not PvPTogether.isInitialized then
 			PvPTogether:Initialize()

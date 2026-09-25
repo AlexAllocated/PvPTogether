@@ -36,6 +36,7 @@ return function(root)
 			frameData = {},
 			mutations = {},
 			foreignWrites = 0,
+			nativeMutationAttempts = 0,
 			secret = {},
 			inaccessible = {},
 			inaccessibleTables = {},
@@ -205,6 +206,10 @@ return function(root)
 		end
 		local function mutate(frame, method, ...)
 			local config = data(frame)
+			if config.foreign and method ~= "CreateTexture" then
+				state.nativeMutationAttempts = state.nativeMutationAttempts + 1
+				error("attempted native widget mutation: " .. method)
+			end
 			assert(not config.forbidden, "attempted " .. method .. " on a forbidden frame")
 			assert(
 				not state.inaccessible[frame] and not state.inaccessibleTables[frame],

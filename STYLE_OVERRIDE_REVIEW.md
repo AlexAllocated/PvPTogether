@@ -2,7 +2,7 @@
 
 September 24, 2026. Reviewed PvPTogether `73e0def4f9e905e4b8831abf306e666f4b24d161`, the installed Retail/Forever UI exports, and the user's Forever build 70009 reports. No production behavior changed during this review. Earlier visual confirmation established that styles could apply, not that they remained reliable through gameplay transitions.
 
-**Recommendation: retire per-category native style overrides from PvPTogether. Keep category border colors and provide access to Blizzard's global nameplate settings.** There are fixable lifecycle bugs, but the current feature also promises more than its partial geometry adapter can deliver. Cosmetic nameplate customization remains supported in principle; this recommendation concerns this implementation and its maintenance cost, not a claim that all nameplate styling is impossible.
+**Accepted decision: retire per-category native style overrides from PvPTogether. Keep category border colors and provide access to Blizzard's global nameplate settings.** There are fixable lifecycle bugs, but the current feature also promises more than its partial geometry adapter can deliver. Cosmetic nameplate customization remains supported in principle; this recommendation concerns this implementation and its maintenance cost, not a claim that all nameplate styling is impossible.
 
 ## Confirmed implementation weaknesses
 
@@ -13,10 +13,12 @@ September 24, 2026. Reviewed PvPTogether `73e0def4f9e905e4b8831abf306e666f4b24d1
 
 ## Reproduction evidence
 
-The separate offline characterization script below loads the production addon into `tests/harness.lua` private fixtures. It does not touch the game, SavedVariables, or native globals. Run against the reviewed revision with either Lua 5.1 or 5.2:
+The historical characterization script loads the retired addon into `tests/harness.lua` private fixtures. It does not touch the game, SavedVariables, or native globals. The probe and its compatible fixtures are preserved at audit commit `86aea5d`; they have been removed from the current suite. To reproduce with Lua 5.1 or 5.2, extract that revision into a temporary directory:
 
 ```sh
-lua scripts/review_style_lifecycle.lua .
+review_dir="$(mktemp -d)"
+git archive 86aea5d | tar -x -C "$review_dir"
+lua "$review_dir/scripts/review_style_lifecycle.lua" "$review_dir"
 ```
 
 Both interpreters produced the same observations. These are fixture dimensions, not measured live pixels:
@@ -44,11 +46,13 @@ Paths below are relative to the installed client's `BlizzardInterfaceCode/Interf
 
 Blizzard explicitly describes cosmetic nameplate/cast-bar customization as an intended capability in [Combat Philosophy and Addon Disarmament in Midnight](https://news.blizzard.com/en-us/article/24246290/combat-philosophy-and-addon-disarmament-in-midnight). That does not provide a persistent per-unit native preset API. The installed nameplate API documentation does not expose one.
 
-## Proposed product change
+## Implemented product change
 
 - Remove per-category style dropdowns and their style previews; expose a button to Blizzard's global nameplate settings.
 - Keep party/friendly/enemy border enable controls and colors, the shared console, and diagnostics.
 - Retire native geometry mutations, layout snapshot observers, and style reapplication hooks. Keep only lifecycle, restriction, identity, and cleanup work required by the owned border overlays; decouple borders from native style-hook installation.
 - Preserve old saved style values as ignored data so retirement does not destructively rewrite user preferences. Existing live geometry should return to native after `/reload`; do not force native setup helpers or overwrite saved files.
 
-If per-category geometry is retained instead, it needs a lifecycle redesign: validate identity and the replacement plan before changing a valid layout, handle every deferred outcome explicitly, avoid unnecessary restore/reapply passes, and test continuity across native refresh, pooling, target/focus, casting, name-only mode, settings changes, and restrictions. Even then the feature must be described as limited geometry customization, with native fallback where access is unavailable. That is materially more work than another hook or timer adjustment.
+The user approved retirement after reviewing these findings. The current implementation removes all native geometry setters and hooks. Tests make native widget mutations fail (except attaching a newly created addon-owned texture), and cover border cleanup, recycling, unknown classification, restriction transitions, and stale timers. The options page links directly to `Settings.NAMEPLATE_OPTIONS_CATEGORY_ID`, registered by both installed clients, without reading or writing their style providers or CVars.
+
+Offline validation is separate from live confirmation. Reload the client, open `/pt`, check all three border categories and the Blizzard Settings button, change the global style, and exercise targeting, casting, pooling, and disable/re-enable. Native layout should follow the global setting throughout; only the selected category border is supplied by PT.

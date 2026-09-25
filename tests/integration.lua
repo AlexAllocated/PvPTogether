@@ -67,7 +67,7 @@ return function(H)
 		local addon, state = H.new()
 		local base = state:plate("nameplate1")
 		addon.isEnabled, addon.db.enemyPlayerStyle = true, 2
-		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		H.truthy(addon:RefreshNameplateFrame(base))
 		addon:RecordDiagnostic("existing-reason")
 		local db, store, log = addon.db, addon.diagnosticCounterStore, addon.diagnosticLog
 		local counters, layouts = addon:GetDiagnosticSnapshot(), addon.nameplateStateByFrame

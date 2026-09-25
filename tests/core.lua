@@ -1,219 +1,90 @@
 return function(H)
-	local function ForeverStyles()
-		return {
-			{ value = 1, label = "Default" },
-			{ value = 0, label = "Large" },
-			{ value = 2, label = "Block" },
-			{ value = 4, label = "Cast Focus" },
-		}
-	end
-
-	H.test("all override dropdowns use Forever native choices labels and order", function()
-		local addon, state = H.new({
-			options = true,
-			configure = function(env, fixture)
-				env.NameplatesOverrides.GetNameplateStyleOptions = ForeverStyles
-				fixture.cvars.nameplateStyle = "1"
-				env.PvPTogetherDBChar = { enemyPlayerStyle = 3, styleSeeded = true, partyMemberStyleSeeded = true }
-			end,
-		})
-		addon.isEnabled = true
-		addon:InitializeOptionsWindow()
-		for _, kind in ipairs({ "partyMember", "friendlyPlayer", "enemyPlayer" }) do
-			local menu = {}
-			local root = {
-				CreateRadio = function(_, label, selected, set, value)
-					menu[#menu + 1] = { label = label, value = value, selected = selected, set = set }
-				end,
-			}
-			state.frameData[addon.optionControls[kind .. "Style"]].menu(nil, root)
-			H.equal(#menu, 5)
-			H.equal(menu[1].label, "Inherit From Global Setting")
-			for index, native in ipairs(ForeverStyles()) do
-				H.equal(menu[index + 1].value, native.value)
-				H.equal(menu[index + 1].label, native.label)
-			end
-		end
-		H.falsy(addon:IsNameplateStyle(3))
-		H.falsy(addon:IsNameplateStyle(5))
-		H.equal(addon.db.enemyPlayerStyle, nil)
-		H.equal(addon:GetConfiguredStyleForUnitKind("enemyPlayer"), 1)
-		H.falsy(addon:SetOption("enemyPlayerStyle", 3))
-		H.equal(#state.cvarWrites, 0)
-		H.equal(state.foreignWrites, 0)
-	end)
-
-	H.test("Retail options retain all six supported choices and copy provider labels", function()
-		local addon, _, env = H.new({ coreOnly = true })
-		H.equal(#addon.nameplateStyleOrder, 6)
-		H.truthy(addon:IsNameplateStyle(3))
-		H.truthy(addon:IsNameplateStyle(5))
-		local options = {
-			{ value = 3, label = "Localized health style" },
-			{ value = 3, label = "Duplicate" },
-			{ value = 6, label = "Native only" },
-			{ value = 99, label = "Future renderer" },
-			{ value = 2, label = "Localized block style" },
-		}
-		env.NameplatesOverrides.GetNameplateStyleOptions = function()
-			return options
-		end
-		H.truthy(addon:RefreshNameplateStyleOptions())
-		H.equal(#addon.nameplateStyleOrder, 2)
-		H.equal(addon.nameplateStyleOrder[1], 3)
-		H.equal(addon.nameplateStyleOrder[2], 2)
-		H.equal(#options, 5)
-		options[1].label, options[1].value = "Changed", 0
-		H.equal(addon:GetNameplateStyleLabel(3), "Localized health style")
-		H.equal(addon.nameplateStyleOrder[1], 3)
-	end)
-
-	H.test("late native settings provider preserves saved choices and activates them after loading", function()
-		local addon, state, env = H.new({
-			coreOnly = true,
-			configure = function(client)
-				client.NameplatesOverrides = nil
-				client.PvPTogetherDBChar = { enemyPlayerStyle = 4, styleSeeded = true, partyMemberStyleSeeded = true }
-			end,
-		})
-		H.equal(#addon.nameplateStyleOrder, 0)
-		H.equal(addon.db.enemyPlayerStyle, 4)
-		H.equal(addon:GetConfiguredStyleForUnitKind("enemyPlayer"), 0)
-		env.NameplatesOverrides = { GetNameplateStyleOptions = ForeverStyles }
-		state:emit("ADDON_LOADED", "Blizzard_SettingsDefinitions_Frame")
-		H.equal(#addon.nameplateStyleOrder, 4)
-		H.equal(addon:GetConfiguredStyleForUnitKind("enemyPlayer"), 4)
-	end)
-
-	H.test("older Retail uses the callback registered on the native global dropdown", function()
+	H.test("legacy style preferences are preserved but no longer accepted as active settings", function()
 		local addon, state = H.new({
 			coreOnly = true,
-			configure = function(env, fixture)
-				local provider = env.NameplatesOverrides.GetNameplateStyleOptions
-				env.NameplatesOverrides.GetNameplateStyleOptions = nil
-				local setting, category = {}, {}
-				local initializers =
-					{ { data = { setting = {} } }, { data = { setting = setting, options = provider } } }
-				env.Settings.NAMEPLATE_OPTIONS_CATEGORY_ID = 42
-				env.Settings.GetSetting = function(variable)
-					H.equal(variable, "nameplateStyle")
-					return setting
+			configure = function(env)
+				env.PvPTogetherDBChar = {
+					partyMemberStyle = 0,
+					friendlyPlayerStyle = 2,
+					enemyPlayerStyle = 3,
+					styleSeeded = true,
+					partyMemberStyleSeeded = true,
+				}
+				env.NameplatesOverrides.GetNameplateStyleOptions = function()
+					error("retired provider invoked")
 				end
-				env.Settings.GetCategory = function(id)
-					H.equal(id, 42)
-					return category
-				end
-				env.SettingsPanel = fixture:frame({
-					GetLayout = function(_, selected)
-						H.equal(selected, category)
-						return { initializers = initializers }
-					end,
-				}, true)
 			end,
 		})
-		H.equal(#addon.nameplateStyleOrder, 6)
-		H.equal(addon.nameplateStyleOrder[4], 3)
-		H.equal(addon:GetNameplateStyleLabel(3), "Health Focus")
-		H.equal(state.foreignWrites, 0)
+		for key, value in pairs({ partyMemberStyle = 0, friendlyPlayerStyle = 2, enemyPlayerStyle = 3 }) do
+			H.equal(addon.db[key], value)
+			H.falsy(addon:SetOption(key, 4))
+			H.falsy(addon:SetOption(key, nil))
+			H.equal(addon.db[key], value)
+		end
+		H.truthy(addon.db.styleSeeded)
 		H.equal(#state.cvarWrites, 0)
 	end)
 
-	H.test("registered dropdown fallback never inspects forbidden settings frames", function()
-		local addon, state = H.new({
-			coreOnly = true,
-			configure = function(env, fixture)
-				env.NameplatesOverrides = nil
-				env.SettingsPanel = fixture:frame({}, true)
-				fixture.frameData[env.SettingsPanel].forbidden = true
-				fixture.frameData[env.SettingsPanel].fields.GetLayout = function()
-					error("forbidden read")
-				end
-			end,
-		})
-		H.equal(#addon.nameplateStyleOrder, 0)
-		H.falsy(addon.nameplateStyleOptionsAvailable)
-		H.equal(state.foreignWrites, 0)
-	end)
-
-	H.test("unreadable native style options fail closed without retaining stale choices", function()
-		for _, mode in ipairs({
-			"error",
-			"secret-table",
-			"inaccessible-table",
-			"secret-value",
-			"secret-label",
-			"row",
-			"metatable",
-		}) do
-			local addon, state, env = H.new({ coreOnly = true })
-			local options = ForeverStyles()
-			local calls = 0
-			if mode == "secret-table" then
-				state.secret[options] = true
-			elseif mode == "inaccessible-table" then
-				state.inaccessibleTables[options] = true
-			elseif mode == "secret-value" then
-				options[2].value = state:secretValue()
-			elseif mode == "secret-label" then
-				options[2].label = state:secretValue()
-			elseif mode == "row" then
-				options[2] = false
-			elseif mode == "metatable" then
-				options[2] = setmetatable({}, {
-					__index = function()
-						calls = calls + 1
-						error("foreign field")
-					end,
-				})
-			end
-			env.NameplatesOverrides.GetNameplateStyleOptions = function()
-				if mode == "error" then
-					error("provider unavailable")
-				end
-				return options
-			end
-			H.falsy(addon:RefreshNameplateStyleOptions())
-			H.equal(#addon.nameplateStyleOrder, 0)
-			H.falsy(addon:IsNameplateStyle(3))
-			H.equal(calls, 0)
-		end
-	end)
-
-	H.test("opening an override menu refreshes native choices and rejects removed selections", function()
+	H.test("border settings replace style controls and open the native nameplate category", function()
 		local addon, state, env = H.new({ options = true })
 		addon.isEnabled = true
+		env.Settings.NAMEPLATE_OPTIONS_CATEGORY_ID = 77
 		addon:InitializeOptionsWindow()
+		for _, kind in ipairs({ "partyMember", "friendlyPlayer", "enemyPlayer" }) do
+			H.equal(addon.optionControls[kind .. "Style"], nil)
+			H.equal(addon.optionControls[kind .. "Preview"], nil)
+			H.truthy(addon.optionControls[kind .. "BorderEnabled"])
+			H.truthy(addon.optionControls[kind .. "BorderColor"])
+		end
+		state.frameData[addon.optionControls.blizzardNameplateSettings].scripts.OnClick()
+		H.equal(state.openCategory, 77)
+		H.equal(#state.timers, 0)
+		H.equal(#state.cvarWrites, 0)
+		env.C_NamePlate = nil
+		addon:RefreshOptionsWindow()
+		H.falsy(state.frameData[addon.optionControls.enemyPlayerBorderEnabled].enabled)
+	end)
+
+	H.test("native settings shortcut handles combat unavailable secret and failing APIs", function()
+		for _, mode in ipairs({ "combat", "missing", "secret", "error" }) do
+			local addon, state, env = H.new({ options = true })
+			env.Settings.NAMEPLATE_OPTIONS_CATEGORY_ID = 77
+			if mode == "combat" then
+				state.combat = true
+			elseif mode == "missing" then
+				env.Settings = nil
+			elseif mode == "secret" then
+				env.Settings.NAMEPLATE_OPTIONS_CATEGORY_ID = state:secretValue()
+			else
+				env.Settings.OpenToCategory = function()
+					error("not available")
+				end
+			end
+			H.falsy(addon:OpenBlizzardNameplateSettings())
+			H.equal(state.openCategory, nil)
+			H.equal(#state.cvarWrites, 0)
+		end
+	end)
+
+	H.test("diagnostics explain native layout without reporting legacy overrides", function()
+		local addon = H.new()
 		addon.db.enemyPlayerStyle = 3
-		env.NameplatesOverrides.GetNameplateStyleOptions = ForeverStyles
-		local values = {}
-		state.frameData[addon.optionControls.enemyPlayerStyle].menu(nil, {
-			CreateRadio = function(_, _, _, _, value)
-				values[#values + 1] = value
-			end,
-		})
-		H.equal(#values, 5)
-		H.equal(addon:GetConfiguredStyleForUnitKind("enemyPlayer"), addon:GetCurrentGlobalNameplateStyle())
-		H.falsy(addon:SetOption("enemyPlayerStyle", 3))
+		local report = addon:BuildDiagnostics()
+		H.truthy(report:find("layout=Blizzard global settings", 1, true))
+		H.falsy(report:find("enemyPlayer.style", 1, true))
+		H.falsy(report:find("layoutFailure", 1, true))
+		H.falsy(report:find("retainedLayouts", 1, true))
 	end)
 
 	H.test("fixtures isolate addon globals and saved variables", function()
 		local first, firstState, firstEnv = H.new({ coreOnly = true })
 		local second, _, secondEnv = H.new({ coreOnly = true })
-		first.db.enemyPlayerStyle = 5
-		H.equal(second.db.enemyPlayerStyle, 0)
+		first.db.enemyPlayerBorderEnabled = true
+		H.equal(second.db.enemyPlayerBorderEnabled, false)
 		H.truthy(firstEnv ~= secondEnv)
 		H.truthy(firstEnv.PvPTogetherDBChar ~= secondEnv.PvPTogetherDBChar)
 		H.equal(rawget(_G, "PvPTogether"), nil)
 		H.equal(firstState.foreignWrites, 0)
-	end)
-
-	H.test("style normalization converts numeric strings and fallback to integers", function()
-		local addon = H.new({ coreOnly = true })
-		H.equal(addon:NormalizeNameplateStyle("2", 0), 2)
-		H.equal(addon:NormalizeNameplateStyle("invalid", "3"), 3)
-		H.equal(addon:NormalizeNameplateStyle(nil, "invalid"), 0)
-		H.equal(addon:NormalizeNameplateStyle(2.49, 0), 2)
-		H.equal(addon:NormalizeNameplateStyle(2.5, 0), 3)
 	end)
 
 	H.test("numbers reject nonfinite and foreign values", function()
@@ -224,7 +95,6 @@ return function(H)
 		H.equal(addon:SafeToNumber({}), nil)
 		H.equal(addon:SafeToNumber(true), nil)
 		H.equal(addon:SafeToNumber("0.25"), 0.25)
-		H.equal(addon:NormalizeNameplateStyle(math.huge, 4), 4)
 	end)
 
 	H.test("secret and inaccessible primitives never enter normalization", function()
@@ -234,7 +104,6 @@ return function(H)
 		H.equal(addon:SafeToBoolean(secret), nil)
 		H.equal(addon:SafeToString(secret, "unavailable"), "unavailable")
 		state.inaccessible["2"] = true
-		H.equal(addon:NormalizeNameplateStyle("2", 4), 4)
 	end)
 
 	H.test("failed secret query fails closed", function()
@@ -340,15 +209,6 @@ return function(H)
 		H.falsy(addon:IsInCombatLockdown())
 	end)
 
-	H.test("CVar failures use safe global style fallback", function()
-		local addon, state = H.new({ coreOnly = true })
-		state.queryErrors.cvar = true
-		H.equal(addon:GetCurrentGlobalNameplateStyle(), 0)
-		state.queryErrors.cvar = nil
-		state.cvars.nameplateStyle = state:secretValue()
-		H.equal(addon:GetCurrentGlobalNameplateStyle(), 0)
-	end)
-
 	H.test("color normalization clamps values and repairs invalid components", function()
 		local addon, state = H.new({ coreOnly = true })
 		local color = addon:NormalizeColorRGB({ r = -4, g = 3, b = "0.2" }, { r = 0, g = 0, b = 0 })
@@ -398,14 +258,14 @@ return function(H)
 	H.test("settings refresh is coalesced instead of a synchronous mutation", function()
 		local addon = H.new({ coreOnly = true })
 		local scheduled, direct = 0, 0
-		addon.ScheduleReapplyAllNameplateStyles = function()
+		addon.ScheduleNameplateRefresh = function()
 			scheduled = scheduled + 1
 		end
-		addon.ReapplyAllNameplateStyles = function()
+		addon.RefreshNameplates = function()
 			direct = direct + 1
 		end
 		addon.isEnabled = true
-		H.truthy(addon:SetOption("enemyPlayerStyle", 2))
+		H.truthy(addon:SetOption("enemyPlayerBorderEnabled", true))
 		H.equal(scheduled, 1)
 		H.equal(direct, 0)
 	end)
@@ -417,30 +277,8 @@ return function(H)
 				env.issecretvalue, env.canaccessvalue, env.canaccesstable = nil, nil, nil
 			end,
 		})
-		H.equal(addon:NormalizeNameplateStyle("4", "1"), 4)
-		H.truthy(addon:CanAccessTable({}))
-	end)
 
-	H.test("Forever native Classic style survives inheritance without becoming an override", function()
-		local addon, state = H.new({
-			coreOnly = true,
-			configure = function(env, state)
-				env.Enum.NamePlateStyle.Classic = 6
-				state.cvars.nameplateStyle = "6"
-			end,
-		})
-		H.equal(addon:GetCurrentGlobalNameplateStyle(), 6)
-		H.equal(addon:NormalizeNameplateStyle(nil, 6), 6)
-		H.falsy(addon:IsNameplateStyle(6))
-		for _, kind in ipairs({ "partyMember", "friendlyPlayer", "enemyPlayer" }) do
-			H.equal(addon:GetOption(kind .. "Style"), nil)
-		end
-		H.truthy(addon.db.styleSeeded)
-		H.truthy(addon.db.partyMemberStyleSeeded)
-		state.cvars.nameplateStyle = "3"
-		addon:InitializeDatabase()
-		H.equal(addon.db.enemyPlayerStyle, nil)
-		H.equal(addon:GetConfiguredStyleForUnitKind("enemyPlayer"), 3)
+		H.truthy(addon:CanAccessTable({}))
 	end)
 
 	H.test("diagnostics have bounded keys and bounded counter values", function()
@@ -468,53 +306,6 @@ return function(H)
 		local second = addon:GetDiagnosticSnapshot()
 		H.equal(second[1].reason, "unavailable")
 		H.equal(second[1].count, 1)
-	end)
-
-	H.test("stopped preview timer cannot restart work after re-enable", function()
-		local addon, state = H.new({ coreOnly = true, options = true })
-		addon.optionsFrame = state:frame({}, false)
-		addon.isEnabled = true
-		local refreshes = 0
-		addon.RandomizeOptionsPreviewClasses = function()
-			refreshes = refreshes + 1
-		end
-		addon.RefreshOptionsPreviewsOnly = function() end
-		addon:StartOptionsPreviewTicker()
-		local oldCallback = assert(state.timers[1], "preview timer was not created").callback
-		addon:StopOptionsPreviewTicker()
-		addon:StartOptionsPreviewTicker()
-		oldCallback()
-		H.equal(refreshes, 0)
-		state.timers[#state.timers].callback()
-		H.equal(refreshes, 1)
-	end)
-
-	H.test("disable invalidates color picker callbacks and stops preview", function()
-		local addon, state = H.new({ coreOnly = true, options = true })
-		addon.optionsFrame = state:frame({}, false)
-		addon.isEnabled = true
-		addon:StartOptionsPreviewTicker()
-		local timer = assert(state.timers[1])
-		local generation = addon.optionsCallbackGeneration or 0
-		addon:Disable()
-		H.truthy(timer.cancelled)
-		H.truthy(addon.optionsCallbackGeneration > generation)
-		H.equal(addon.optionsPreviewTicker, nil)
-	end)
-
-	H.test("modern settings panel initializes and gates unavailable style capability", function()
-		local addon, state, env = H.new({ options = true })
-		addon.isEnabled = true
-		addon:InitializeOptionsWindow()
-		H.truthy(addon.optionsFrame)
-		local controls = addon.optionControls
-		H.truthy(state.frameData[controls.enemyPlayerStyle].menu)
-		H.truthy(state.frameData[controls.enemyPlayerStyle].enabled)
-		env.NamePlateSetupOptions.useClassicHealthBar = true
-		addon:RefreshOptionsWindow()
-		H.falsy(state.frameData[controls.enemyPlayerStyle].enabled)
-		H.truthy(state.frameData[controls.enemyPlayerBorderEnabled].enabled)
-		H.equal(state.foreignWrites, 0)
 	end)
 
 	H.test("stale color picker callbacks cannot change settings after disable and re-enable", function()
