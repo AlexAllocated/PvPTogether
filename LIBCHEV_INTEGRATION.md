@@ -1,6 +1,6 @@
 # libchev integration — September 24, 2026
 
-PvPTogether vendors **libchev 1.1.1** at immutable commit [`2feea04bab60ba1c1b91bd01ab8a58ce02e091a9`](https://github.com/AlexAllocated/libchev/commit/2feea04bab60ba1c1b91bd01ab8a58ce02e091a9). `Libs/libchev/manifest.json` records SHA-256 hashes for each embedded source/license file. The upstream vendor tool verified the provisional embed against its historical Git revision before migrating it. Embedded source was not edited locally.
+PvPTogether vendors **libchev 1.1.2** at immutable commit [`484a7f54aaf46c0ec042ff813b06f69bba94628f`](https://github.com/AlexAllocated/libchev/commit/484a7f54aaf46c0ec042ff813b06f69bba94628f). `Libs/libchev/manifest.json` records SHA-256 hashes for each embedded source/license file. The upstream vendor tool verified the provisional embed against its historical Git revision before migrating it. Embedded source was not edited locally.
 
 Each addon loader gets its own `namespace.LibChev`. PvPTogether captures that private instance; there is no global registry or provisional `Together` alias. Nameplate classification, native permissions, restriction checks, journal ownership, and lifecycle decisions remain in PvPTogether. The shared debug controller owns bounded log storage operations, category/search state, diagnostic export history, test presentation, debug-command dispatch, and the complete console. PvPTogether supplies private stores, its domain report/tests, and restriction callbacks; it also uses shared weak-table construction and generation fencing.
 
@@ -12,7 +12,7 @@ Each addon loader gets its own `namespace.LibChev`. PvPTogether captures that pr
 - Restricted or unavailable report UI falls back to chat. Region mutation requires both the library's owned-region checks and PvPTogether's native permission checks. Callbacks recheck restrictions; window-construction failures are contained without printing the foreign exception.
 - `/pt test` runs **15 detached checks**: 13 shared self-tests plus 2 addon checks. It does not replace engine APIs, create nameplates, reset runtime stores, or modify saved settings. Failure output contains static test labels and a summary, not raw foreign error payloads. The standalone offline runner executes these same bodies too. The slash command replaces TEST history and presents one current summary in the shared console, with chat fallback under the same guards as general diagnostics. Programmatic `RunTests()` remains headless by default; `RunTests(true)` explicitly requests presentation.
 
-The addon version is **1.1.0-beta.3**, with [release notes](CHANGELOG.md). Publication uses the existing annotated-tag convention and a GitHub prerelease. The prior [Retail/Forever audit](AUDIT_2026-09-24.md) and its live-validation limits still apply.
+The addon version is **1.1.0**, with [release notes](CHANGELOG.md). Publication uses the existing annotated-tag convention and a stable GitHub release. The prior [Retail/Forever audit](AUDIT_2026-09-24.md) and its live-validation limits still apply.
 
 ## Validation
 
@@ -29,3 +29,5 @@ These automated checks are offline. The user reported all 15 `/pt test` checks p
 Reload Retail and Forever, run `/pt test` (expect 15 passed), then `/pt diagnostics`. Verify the report can be selected/copied, scrolled, closed, and reopened. During restrictions, diagnostics should fall back to chat; callbacks from an already-open report should stop until restrictions end. Repeat the prior audit's combat, recycled-plate, settings, disable/re-enable, and multi-addon checks. Report the client build, copied diagnostics, and the first error/blocked-action stack separately if a failure occurs.
 
 For future library updates, use the upstream vendor script with an exact reviewed commit, then repeat consumer validation. Never hand-edit files under `Libs/libchev`.
+
+For the stable release, the user confirmed the shared frame appearance after the texture-bounds correction. This visual confirmation does not establish every gameplay or restriction path.
