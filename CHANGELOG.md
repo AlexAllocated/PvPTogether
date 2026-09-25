@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 — 2026-09-24
+
+Use the same private libchev 1.1.2 debug console across all three addons, including category/search filters, copy controls, test results, diagnostic reports, timestamps when available, and a single final test summary. Fix stretched native frame artwork with explicit texture bounds.
+
+Includes Retail/Forever nameplate lifecycle hardening, home-party-only styling, guarded cleanup, and a safe clock adapter for consistent timestamped diagnostics. Run `/pt test`, `/pt debug`, or `/pt diagnostics`. In-game tests use 15 detached checks; offline engine fixtures remain excluded.
+
+Validation: 144 offline regressions pass in both orders on Lua 5.1/5.2. The user confirmed the corrected shared frame appearance in-game. Earlier Forever build 70009 results were 15/15; this is not a blanket claim about every live restriction or gameplay path.
+
 ## 1.1.0-beta.3 — 2026-09-24
 
 - Update the shared libchev console to native WoW dialog artwork and button textures while retaining addon-owned frames and restriction guards.
