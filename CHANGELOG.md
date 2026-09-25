@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.1.1 — 2026-09-24
+
+Keep overlapping debug consoles and their controls in one native stacking group through private libchev 1.1.3. Category menus stay with their owning console.
 
 - Retire per-category style overrides and previews. Blizzard's global nameplate settings now own all native layout and style behavior.
 - Keep party, friendly-player, and enemy-player border toggles and colors. Add a **Blizzard Nameplate Settings** button to `/pt`.

@@ -2,7 +2,7 @@
 ## Interface-Mainline: 120100
 ## Interface-Camelot: 16001
 ## Title: PvPTogether
-## Version: 1.1.0
+## Version: 1.1.1
 ## Notes: Custom party, friendly, and enemy player nameplate borders.
 ## SavedVariablesPerCharacter: PvPTogetherDBChar
 ## Author: Chev
