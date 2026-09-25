@@ -501,6 +501,7 @@ end
 
 local function CreateStyleDropdown(parent, titleText, tooltipText, x, y, optionKey)
 	return CreateDropdown(parent, titleText, tooltipText, x, y, 220, function(_, rootDescription)
+		PvPTogether:RefreshNameplateStyleOptions()
 		local function IsSelected(styleValue)
 			if styleValue == INHERIT_STYLE_DROPDOWN_VALUE then
 				return not PvPTogether:IsNameplateStyle(PvPTogether:GetOption(optionKey))
@@ -812,6 +813,7 @@ function PvPTogether:RefreshOptionsWindow()
 	if not self.optionsFrame or not self.optionsFrame:IsShown() then
 		return
 	end
+	self:RefreshNameplateStyleOptions()
 	local controls = self.optionControls or {}
 	local enabled = self:GetOption("enabled") == true
 	local capabilities = self.GetNameplateCapabilities and self:GetNameplateCapabilities() or {}

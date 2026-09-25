@@ -6,6 +6,8 @@ Reviewed September 24, 2026. Installed build metadata still reports Retail **12.
 
 ## What the clients actually provide
 
+Dropdown follow-up: the shared enum is broader than the choices Blizzard exposes. The installed Forever export's `Blizzard_SettingsDefinitions_Frame/Camelot/NameplatesOverrides.lua` supplies Thin (Default), Modern (Large), Block, and CastFocus in that order. PvPTogether now reads `NameplatesOverrides.GetNameplateStyleOptions`, the provider used by the global setting, instead of treating every enum member as selectable. Older installed Retail code keeps that callback in the registered `nameplateStyle` dropdown initializer; the addon reads its options without opening or modifying Settings. Unsupported saved overrides inherit the current global style, and unavailable option data offers no guessed presets.
+
 | Area | Verified behavior and consequence |
 | --- | --- |
 | Unit categories | Both exports expose `UnitIsPlayer`, `UnitIsFriend`, and `UnitInParty`; Forever references are `UnitDocumentation.lua:2271–2284`, `1977–1990`, and `1637–1650`. The player/friendly/enemy/party distinction remains feasible. An inaccessible or failed query must remain unknown rather than becoming an NPC or enemy. |

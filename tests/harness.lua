@@ -561,6 +561,15 @@ return function(root)
 			{ OnUnitSet = function() end, OnUnitCleared = function() end, UpdateAnchors = function() end }
 		env.NamePlateDriverMixin = { UpdateNamePlateOptions = function() end }
 		env.DropdownButtonMixin = {}
+		env.NameplatesOverrides = {
+			GetNameplateStyleOptions = function()
+				local options = {}
+				for index, label in ipairs({ "Modern", "Thin", "Block", "Health Focus", "Cast Focus", "Legacy" }) do
+					options[index] = { value = index - 1, label = label }
+				end
+				return options
+			end,
+		}
 		env.Settings = {
 			RegisterCanvasLayoutCategory = function()
 				return {
