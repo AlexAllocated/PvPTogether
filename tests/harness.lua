@@ -237,7 +237,10 @@ return function(root)
 		function frameMethods:GetWidth()
 			return result(self, "GetWidth", data(self).width or 200)
 		end
-		function frameMethods:GetHeight()
+		function frameMethods:GetHeight(ignoreRect)
+			if not ignoreRect and data(self).errors.GetHeightRect then
+				error("fixture rectangle unavailable")
+			end
 			return result(self, "GetHeight", data(self).height or 20)
 		end
 		function frameMethods:GetSize()
@@ -358,6 +361,7 @@ return function(root)
 		function frameMethods:SetHeight(value)
 			mutate(self, "SetHeight", value)
 			data(self).height = value
+			state:fireHook("SetHeight", self, value)
 		end
 		function frameMethods:SetWidth(value)
 			mutate(self, "SetWidth", value)
@@ -366,6 +370,7 @@ return function(root)
 		function frameMethods:SetSize(width, height)
 			mutate(self, "SetSize", width, height)
 			data(self).width, data(self).height = width, height
+			state:fireHook("SetSize", self, width, height)
 		end
 		function frameMethods:SetFont(...)
 			mutate(self, "SetFont", ...)
@@ -769,6 +774,10 @@ return function(root)
 			}) do
 				child(unit, name)
 			end
+			data(auras.DebuffListFrame).points = {
+				{ "LEFT", health, "LEFT", 0, 0 },
+				{ "BOTTOM", unit.name, "TOP", 0, 0 },
+			}
 			self.plates[token], self.visible[#self.visible + 1] = base, base
 			self.units[token] = attributes or { guid = "Player-1-" .. token, isPlayer = true, isFriend = false }
 			return base, unit, cast, bar

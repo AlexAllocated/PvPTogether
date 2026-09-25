@@ -407,6 +407,18 @@ return function(H)
 		H.equal(#state.mutations, 0)
 	end)
 
+	H.test("explicit heights restore when computed rectangles cannot be queried", function()
+		local addon, state, _, base, unit, cast = styled()
+		for _, object in ipairs({ unit.CastBarsContainer, cast, unit.HealthBarsContainer }) do
+			state.frameData[object].errors.GetHeightRect = true
+		end
+		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(cast:GetHeight(true), 16)
+		H.truthy(addon:ResetAllNameplateStylesToBlizzard())
+		H.equal(cast:GetHeight(true), 20)
+		H.equal(state.foreignWrites, 0)
+	end)
+
 	H.test("layout preflight rejects forbidden required child before first write", function()
 		local addon, state, _, base, unit = styled()
 		state.frameData[unit.name].forbidden = true
@@ -426,7 +438,7 @@ return function(H)
 	H.test("native option updates supersede only corresponding journal properties", function()
 		local addon, state, _, base, unit, cast = styled()
 		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
-		state.frameData[cast].height = 31 -- A simulated native option pass, performed by fixture ownership.
+		cast:SetHeight(31) -- A simulated native option pass, performed by fixture ownership.
 		state:fireHook("ApplyFrameOptions", unit)
 		addon:Disable()
 		H.equal(cast:GetHeight(), 31)
@@ -556,6 +568,9 @@ return function(H)
 				return true
 			end
 		end
+		addon:ObserveNameplateAnchors(unit)
+		unit.AurasFrame.DebuffListFrame:SetPoint("BOTTOM", unit.name, "TOP", 0, 0)
+		state:clearMutations()
 		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
 		H.equal(cast:GetHeight(), 16)
 		H.truthy(addon.nameplateBorderTintByUnitFrame[unit].Texture:IsShown())
@@ -568,7 +583,7 @@ return function(H)
 		local addon, state, env, base, unit, cast, health = styled()
 		local debuffs = unit.AurasFrame.DebuffListFrame
 		if auraWithoutClear then
-			state.frameData[debuffs].points = { { "BOTTOM", unit.name, "TOP", 0, 0 } }
+			state.frameData[debuffs].points = { { "LEFT", unit.HealthBarsContainer, "LEFT", 0, 0 } }
 		end
 		for _, config in pairs(state.frameData) do
 			config.fields.IsAnchoringRestricted = function()
@@ -583,7 +598,10 @@ return function(H)
 		state.frameData[base].fields.UnitFrame = unit
 		state:fireHook("AcquireUnitFrame", base)
 		for object in pairs(addon.nameplateAnchorRecords) do
-			if auraWithoutClear and object == debuffs then
+			if object == debuffs then
+				if not auraWithoutClear then
+					object:ClearAllPoints()
+				end
 				object:SetPoint("BOTTOM", unit.name, "TOP", 0, 0)
 			else
 				object:ClearAllPoints()
@@ -606,33 +624,99 @@ return function(H)
 		H.equal(state.foreignWrites, 0)
 	end)
 
+	H.test("observed native heights apply and restore without readable geometry", function()
+		local addon, state, _, base, unit, cast = observedRestrictedPlate(true)
+		for _, object in ipairs({ unit.CastBarsContainer, cast, unit.HealthBarsContainer }) do
+			object:SetHeight(20)
+			state.frameData[object].errors.GetHeight = true
+		end
+		state:clearMutations()
+		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(state.frameData[cast].height, 16)
+		H.equal(state.frameData[unit.name].points[1][1], "LEFT")
+		H.truthy(addon:ResetAllNameplateStylesToBlizzard())
+		H.equal(state.frameData[cast].height, 20)
+		H.equal(state.frameData[unit.CastBarsContainer].height, 20)
+		H.equal(state.frameData[unit.HealthBarsContainer].height, 20)
+		H.equal(#state.frameData[unit.AurasFrame.DebuffListFrame].points, 2)
+		H.equal(state.foreignWrites, 0)
+	end)
+
+	H.test("height observers preserve later SetSize changes during restoration", function()
+		local addon, state, _, base, _, cast = observedRestrictedPlate(true)
+		cast:SetHeight(20)
+		state.frameData[cast].errors.GetHeight = true
+		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		cast:SetSize(100, 31)
+		H.truthy(addon:ResetAllNameplateStylesToBlizzard())
+		H.equal(state.frameData[cast].height, 31)
+		H.equal(state.foreignWrites, 0)
+	end)
+
+	H.test("secret height updates invalidate an observed baseline until a public update", function()
+		for _, setter in ipairs({ "SetHeight", "SetSize" }) do
+			local addon, state, _, base, _, cast = observedRestrictedPlate(true)
+			cast:SetHeight(20)
+			if setter == "SetSize" then
+				state:fireHook(setter, cast, 100, state:secretValue())
+			else
+				state:fireHook(setter, cast, state:secretValue())
+			end
+			state:clearMutations()
+			H.falsy(addon:ReapplyStyleForNameplateFrame(base))
+			H.equal(addon.lastLayoutFailure.step, 2)
+			H.equal(addon.lastLayoutFailure.reason, "height-baseline-pending")
+			H.equal(#state.mutations, 0)
+			cast:SetSize(100, 20)
+			H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		end
+	end)
+
+	H.test("aura point restoration preserves horizontal and newer vertical anchors", function()
+		local addon, state, _, base, unit = observedRestrictedPlate(true)
+		local debuffs = unit.AurasFrame.DebuffListFrame
+		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(state:countMutations("ClearAllPoints", debuffs), 0)
+		debuffs:SetPoint("LEFT", unit.HealthBarsContainer, "LEFT", 7, 0)
+		debuffs:SetPoint("BOTTOM", unit.name, "TOP", 0, 12)
+		H.truthy(addon:ResetAllNameplateStylesToBlizzard())
+		local points = state.frameData[debuffs].points
+		H.equal(#points, 2)
+		H.equal(points[1][4], 7)
+		H.equal(points[2][5], 12)
+		H.equal(state:countMutations("ClearAllPoints", debuffs), 0)
+	end)
+
 	H.test("native aura anchors updated without a clear permit the full bar style", function()
 		local addon, state, _, base, unit, cast = observedRestrictedPlate(true)
 		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
 		H.equal(cast:GetHeight(), 16)
 		H.equal(state.frameData[unit.name].points[1][1], "LEFT")
 		H.truthy(addon:ResetAllNameplateStylesToBlizzard())
-		local point = state.frameData[unit.AurasFrame.DebuffListFrame].points[1]
+		local points = state.frameData[unit.AurasFrame.DebuffListFrame].points
+		H.equal(#points, 2)
+		H.equal(points[1][1], "LEFT")
+		H.equal(points[1][2], unit.HealthBarsContainer)
+		local point = points[2]
 		H.equal(point[1], "BOTTOM")
 		H.equal(point[2], unit.name)
 		H.equal(state.foreignWrites, 0)
 	end)
 
 	H.test("partial anchor observations wait until all current points are known", function()
-		local addon, state, _, base, unit = observedRestrictedPlate()
-		local debuffs = unit.AurasFrame.DebuffListFrame
-		state.frameData[debuffs].points = {
+		local addon, state, _, base, unit, cast = observedRestrictedPlate()
+		state.frameData[cast].points = {
 			{ "BOTTOM", unit.name, "TOP", 0, 0 },
 			{ "LEFT", unit, "LEFT", 0, 0 },
 		}
-		state:fireHook("SetAllPoints", debuffs, unit)
-		debuffs:SetPoint("BOTTOM", unit.name, "TOP", 0, 0)
+		state:fireHook("SetAllPoints", cast, unit)
+		cast:SetPoint("BOTTOM", unit.name, "TOP", 0, 0)
 		state:clearMutations()
 		H.falsy(addon:ReapplyStyleForNameplateFrame(base))
-		H.equal(addon.lastLayoutFailure.step, 15)
+		H.equal(addon.lastLayoutFailure.step, 3)
 		H.equal(addon.lastLayoutFailure.reason, "anchor-baseline-pending")
 		H.equal(#state.mutations, 0)
-		debuffs:SetPoint("LEFT", unit, "LEFT", 0, 0)
+		cast:SetPoint("LEFT", unit, "LEFT", 0, 0)
 		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
 	end)
 
@@ -792,7 +876,7 @@ return function(H)
 	H.test("teardown preserves a newer third-party property change", function()
 		local addon, state, _, base, unit, cast = styled()
 		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
-		state.frameData[unit.CastBarsContainer].height = 31
+		unit.CastBarsContainer:SetHeight(31)
 		addon:Disable()
 		H.equal(unit.CastBarsContainer:GetHeight(), 31)
 		H.equal(cast:GetHeight(), 20)

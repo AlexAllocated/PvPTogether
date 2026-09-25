@@ -12,6 +12,7 @@ PvPTogether.nameplateHooksByUnitFrame = LibChev.WeakKeys()
 PvPTogether.nameplateBorderTintByUnitFrame = LibChev.WeakKeys()
 PvPTogether.nameplateStateByUnitFrame = LibChev.WeakKeys()
 PvPTogether.nameplateAnchorRecords = LibChev.WeakKeys()
+PvPTogether.nameplateHeightRecords = LibChev.WeakKeys()
 PvPTogether.nameplateAcquisitionHooks = LibChev.WeakKeys()
 
 local function Field(object, key)
@@ -325,7 +326,45 @@ local function ObserveAnchors(object)
 	return record.ready
 end
 
-local function ReadAnchors(object)
+local function ObserveHeight(object)
+	if not PvPTogether:CanAccessNameplateFrame(object) or type(hooksecurefunc) ~= "function" then
+		return
+	end
+	local record = PvPTogether.nameplateHeightRecords[object]
+	if record and record.ready then
+		return
+	end
+	if not record then
+		record = { hooks = {} }
+		PvPTogether.nameplateHeightRecords[object] = record
+	end
+	local function Height(_, value)
+		record.observed = true
+		record.height = nil
+		if PvPTogether:CanAccessNameplateFrame(object) then
+			local height = PvPTogether:SafeToNumber(value)
+			if height and height >= 0 then
+				record.height = height
+			end
+		end
+	end
+	for _, spec in ipairs({
+		{ "SetHeight", Height },
+		{
+			"SetSize",
+			function(frame, _, height)
+				Height(frame, height)
+			end,
+		},
+	}) do
+		if not record.hooks[spec[1]] and Method(object, spec[1]) then
+			record.hooks[spec[1]] = pcall(hooksecurefunc, object, spec[1], spec[2])
+		end
+	end
+	record.ready = record.hooks.SetHeight == true and record.hooks.SetSize == true
+end
+
+local function ReadAnchors(object, pointName)
 	local predicate, readable = PvPTogether:SafeGetField(object, "IsAnchoringRestricted")
 	if not readable then
 		return nil, "anchor-restriction-query"
@@ -342,8 +381,18 @@ local function ReadAnchors(object)
 	end
 	if restricted then
 		local record = PvPTogether.nameplateAnchorRecords[object]
-		if record and record.ready and record.points then
-			return CopyPoints(record.points)
+		if record and record.ready then
+			if pointName then
+				-- A single-point replacement preserves all other native anchors,
+				-- including XML anchors that never pass through a Lua setter.
+				for _, point in ipairs(record.points or record.partialPoints) do
+					if point[1] == pointName then
+						return CopyPoints({ point })
+					end
+				end
+			elseif record.points then
+				return CopyPoints(record.points)
+			end
 		end
 		return nil, "anchor-baseline-pending"
 	end
@@ -365,7 +414,12 @@ local function ReadAnchors(object)
 		if x == nil or y == nil then
 			return nil, "anchor-offsets"
 		end
-		points[#points + 1] = { point, relative, relativePoint, x, y }
+		if not pointName or point == pointName then
+			points[#points + 1] = { point, relative, relativePoint, x, y }
+		end
+	end
+	if pointName and #points ~= 1 then
+		return nil, "anchor-baseline-pending"
 	end
 	return points
 end
@@ -376,14 +430,24 @@ local function Snapshot(op)
 	if not allowed then
 		return nil, reason
 	end
-	if op.kind == "points" then
-		return ReadAnchors(object)
+	if op.kind == "points" or op.kind == "point" then
+		return ReadAnchors(object, op.kind == "point" and op.values[1][1] or nil)
 	elseif op.kind == "height" then
-		local ok, value = Call(object, "GetHeight")
+		-- Journal the explicit SetHeight property, not a computed rectangle
+		-- that may be unavailable or determined by the current anchors.
+		local record = PvPTogether.nameplateHeightRecords[object]
+		if record and record.ready and record.observed then
+			if record.height then
+				return { record.height }
+			end
+			return nil, "height-baseline-pending"
+		end
+		local ok, value = Call(object, "GetHeight", true)
 		value = ok and PvPTogether:SafeToNumber(value) or nil
-		if value then
+		if value and value >= 0 then
 			return { value }
 		end
+		return nil, ok and "height-value" or "height-query"
 	elseif op.kind == "justify" then
 		local ok, value = Call(object, "GetJustifyH")
 		if ok and IsToken(value) then
@@ -454,8 +518,8 @@ local function CanWrite(op, values)
 	if not allowed then
 		return false, reason
 	end
-	if op.kind == "points" then
-		if not Method(op.object, "ClearAllPoints") or not Method(op.object, "SetPoint") then
+	if op.kind == "points" or op.kind == "point" then
+		if (op.kind == "points" and not Method(op.object, "ClearAllPoints")) or not Method(op.object, "SetPoint") then
 			return false, "anchor-setter"
 		end
 		if not CanAnchor(op.object, op.anchorRoot) then
@@ -489,8 +553,8 @@ local function Write(op, values)
 	if not CanWrite(op, values) then
 		return false
 	end
-	if op.kind == "points" then
-		if not Call(op.object, "ClearAllPoints") then
+	if op.kind == "points" or op.kind == "point" then
+		if op.kind == "points" and not Call(op.object, "ClearAllPoints") then
 			return false
 		end
 		for _, point in ipairs(values) do
@@ -520,7 +584,7 @@ local function SameTuple(left, right, count)
 end
 
 local function SameProperties(op, current)
-	if op.kind ~= "points" then
+	if op.kind ~= "points" and op.kind ~= "point" then
 		return SameTuple(current, op.applied, #current)
 	end
 	if #current ~= #op.applied then
@@ -613,6 +677,9 @@ function PvPTogether:ObserveNameplateAnchors(unitFrame)
 	end
 	local cast = Child(Child(unitFrame, "CastBarsContainer"), "castBar")
 	local health = Child(Child(unitFrame, "HealthBarsContainer"), "healthBar")
+	ObserveHeight(Child(unitFrame, "CastBarsContainer"))
+	ObserveHeight(cast)
+	ObserveHeight(Child(unitFrame, "HealthBarsContainer"))
 	-- Explicit widget list, never enumerate a foreign frame or its children.
 	for _, spec in ipairs({
 		{ unitFrame, "name" },
@@ -795,16 +862,10 @@ local function BuildPlan(unitFrame, style)
 				return nil
 			end
 		end
-		Add(
-			plan,
-			debuffs,
-			"points",
-			"anchors",
-			{ Point("BOTTOM", insideName and healthBar or name, "TOP", 0, padding) }
-		)
+		Add(plan, debuffs, "point", "anchors", { Point("BOTTOM", insideName and healthBar or name, "TOP", 0, padding) })
 	end
 	for _, op in ipairs(plan) do
-		if op.kind == "points" then
+		if op.kind == "points" or op.kind == "point" then
 			op.anchorRoot = unitFrame
 		end
 	end
