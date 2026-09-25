@@ -2,7 +2,7 @@
 
 PvPTogether vendors **libchev 1.1.3** at immutable commit [`445c0cf5b3dd40d36461f6e0b9adc2feb8dfb16b`](https://github.com/AlexAllocated/libchev/commit/445c0cf5b3dd40d36461f6e0b9adc2feb8dfb16b). `Libs/libchev/manifest.json` records SHA-256 hashes for each embedded source/license file. The upstream vendor tool verified the provisional embed against its historical Git revision before migrating it. Embedded source was not edited locally.
 
-Each addon loader gets its own `namespace.LibChev`. PvPTogether captures that private instance; there is no global registry or provisional `Together` alias. Nameplate classification, native permissions, restriction checks, journal ownership, and lifecycle decisions remain in PvPTogether. The shared debug controller owns bounded log storage operations, category/search state, diagnostic export history, test presentation, debug-command dispatch, and the complete console. PvPTogether supplies private stores, its domain report/tests, and restriction callbacks; it also uses shared weak-table construction and generation fencing.
+Each addon loader gets its own `namespace.LibChev`. PvPTogether captures that private instance; there is no global registry or provisional `Together` alias. Nameplate classification, native permissions, restriction checks, border ownership, and lifecycle decisions remain in PvPTogether. The shared debug controller owns bounded log storage operations, category/search state, diagnostic export history, test presentation, debug-command dispatch, and the complete console. PvPTogether supplies private stores, its domain report/tests, and restriction callbacks; it also uses shared weak-table construction and generation fencing.
 
 ## User-visible behavior
 
@@ -15,6 +15,8 @@ Each addon loader gets its own `namespace.LibChev`. PvPTogether captures that pr
 The addon version is **1.1.0**, with [release notes](CHANGELOG.md). Publication uses the existing annotated-tag convention and a stable GitHub release. The prior [Retail/Forever audit](AUDIT_2026-09-24.md) and its live-validation limits still apply.
 
 ## Validation
+
+Release 1.1.1 retires per-category geometry and retains category borders; 111 offline regressions pass in both orders under Lua 5.1/5.2. Counts and geometry coverage below describe the original integration revision. Current coverage is documented in `tests/README.md`.
 
 - **144/144 offline tests**, normal and reverse order, under both actual **Lua 5.1.5** and **Lua 5.2.4**.
 - All **14 Lua files** parse under both interpreters; StyLua and diff whitespace checks pass.
