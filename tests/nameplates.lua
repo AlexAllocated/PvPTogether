@@ -59,6 +59,40 @@ return function(H)
 		H.truthy(state:countMutations("SetPoint") > 0)
 	end)
 
+	H.test("preflight diagnostics distinguish permission failures without retaining foreign values", function()
+		local addon, state, _, base, unit = styled()
+		state.frameData[unit.CastBarsContainer].results.IsProtected = state:secretValue()
+		H.falsy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(#state.mutations, 0)
+		H.equal(addon.lastLayoutFailure.step, 1)
+		H.equal(addon.lastLayoutFailure.property, "height")
+		H.equal(addon.lastLayoutFailure.stage, "snapshot")
+		H.equal(addon.lastLayoutFailure.reason, "protection-result")
+		H.equal(H.count(addon.lastLayoutFailure), 4)
+		H.truthy(addon:BuildDiagnostics():find("layoutFailure.reason=protection-result", 1, true))
+		state.frameData[unit.CastBarsContainer].results.IsProtected = nil
+		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(addon.lastLayoutFailure, nil)
+	end)
+
+	H.test("preflight diagnostics distinguish unnamed fonts from anchor permission failures", function()
+		local addon, state, _, base, unit = styled()
+		state.frameData[unit.name].fontObject = state:frame({}, true)
+		H.falsy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(#state.mutations, 0)
+		H.equal(addon.lastLayoutFailure.property, "font")
+		H.equal(addon.lastLayoutFailure.reason, "font-object-name")
+		state.frameData[unit.name].fontObject = nil
+		state.frameData[unit.CastBarsContainer].fields.IsAnchoringSecret = function()
+			return true
+		end
+		H.falsy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(#state.mutations, 0)
+		H.equal(addon.lastLayoutFailure.property, "points")
+		H.equal(addon.lastLayoutFailure.stage, "write-permission")
+		H.equal(addon.lastLayoutFailure.reason, "anchor-target-permission")
+	end)
+
 	H.test("forbidden frame check precedes all other foreign member reads", function()
 		local addon, state, _, base = styled()
 		state.frameData[base].forbidden = true
@@ -491,13 +525,17 @@ return function(H)
 
 	for _, predicate in ipairs({ "IsAnchoringRestricted", "IsAnchoringSecret" }) do
 		local name = predicate
-		H.test(name .. " target prevents all style writes during preflight", function()
+		H.test(name .. " target respects the local anchor family", function()
 			local addon, state, _, base, unit = styled()
 			state.frameData[unit.CastBarsContainer].fields[name] = function()
 				return true
 			end
-			H.falsy(addon:ReapplyStyleForNameplateFrame(base))
-			H.equal(#state.mutations, 0)
+			if name == "IsAnchoringRestricted" then
+				H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+			else
+				H.falsy(addon:ReapplyStyleForNameplateFrame(base))
+				H.equal(#state.mutations, 0)
+			end
 		end)
 		H.test(name .. " secret result prevents all style writes", function()
 			local addon, state, _, base, _, cast = styled()
@@ -509,6 +547,103 @@ return function(H)
 			H.equal(#state.mutations, 0)
 		end)
 	end
+
+	H.test("restricted nameplate children permit local geometry and owned border anchors", function()
+		local addon, state, _, base, unit, cast = styled()
+		addon.db.enemyPlayerBorderEnabled = true
+		for _, config in pairs(state.frameData) do
+			config.fields.IsAnchoringRestricted = function()
+				return true
+			end
+		end
+		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(cast:GetHeight(), 16)
+		H.truthy(addon.nameplateBorderTintByUnitFrame[unit].Texture:IsShown())
+		H.equal(state.foreignWrites, 0)
+		H.truthy(addon:ResetAllNameplateStylesToBlizzard())
+		H.equal(cast:GetHeight(), 20)
+	end)
+
+	local function observedRestrictedPlate()
+		local addon, state, env, base, unit, cast, health = styled()
+		for _, config in pairs(state.frameData) do
+			config.fields.IsAnchoringRestricted = function()
+				return true
+			end
+			config.errors.GetPoint = true
+		end
+		state.frameData[base].fields.AcquireUnitFrame = function() end
+		state.frameData[base].fields.UnitFrame = nil
+		addon:EnsureNameplateEventFrame()
+		state:emit("NAME_PLATE_CREATED", base)
+		state.frameData[base].fields.UnitFrame = unit
+		state:fireHook("AcquireUnitFrame", base)
+		for object in pairs(addon.nameplateAnchorRecords) do
+			object:ClearAllPoints()
+			object:SetPoint("CENTER", state.frameData[object].parent, "CENTER", 0, 0)
+		end
+		state:clearMutations()
+		return addon, state, env, base, unit, cast, health
+	end
+
+	H.test("native acquisition captures reversible anchors without querying restricted positions", function()
+		local addon, state, _, base, unit, cast = observedRestrictedPlate()
+		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(cast:GetHeight(), 16)
+		H.equal(state.frameData[unit.name].points[1][1], "LEFT")
+		H.truthy(addon:ResetAllNameplateStylesToBlizzard())
+		H.equal(state.frameData[cast].points[1][1], "CENTER")
+		H.equal(state.frameData[unit.name].points[1][1], "CENTER")
+		H.equal(cast:GetHeight(), 20)
+		H.equal(state.foreignWrites, 0)
+	end)
+
+	H.test("observed restricted anchors preserve newer third-party changes on teardown", function()
+		local addon, state, _, base, unit = observedRestrictedPlate()
+		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		unit.name:ClearAllPoints()
+		unit.name:SetPoint("TOP", unit, "TOP", 9, 11)
+		H.truthy(addon:ResetAllNameplateStylesToBlizzard())
+		H.equal(state.frameData[unit.name].points[1][1], "TOP")
+		H.equal(state.frameData[unit.name].points[1][4], 9)
+		H.equal(state.foreignWrites, 0)
+	end)
+
+	H.test("secret or unobserved anchor changes invalidate the restricted baseline", function()
+		for _, mode in ipairs({ "secret", "unobserved" }) do
+			local addon, state, _, base, _, cast = observedRestrictedPlate()
+			if mode == "secret" then
+				state:fireHook("SetPoint", cast, "TOP", state.frameData[cast].parent, "TOP", state:secretValue(), 0)
+			else
+				state:fireHook("SetAllPoints", cast, state.frameData[cast].parent)
+			end
+			H.falsy(addon:ReapplyStyleForNameplateFrame(base))
+			H.equal(addon.lastLayoutFailure.reason, "anchor-baseline-pending")
+			H.equal(#state.mutations, 0)
+			cast:ClearAllPoints()
+			cast:SetPoint("CENTER", state.frameData[cast].parent, "CENTER", 0, 0)
+			H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		end
+	end)
+
+	H.test("restricted anchor families never cross into another plate or an unreadable parent", function()
+		for _, mode in ipairs({ "other-plate", "secret-parent", "parent-cycle" }) do
+			local addon, state, _, base, unit, cast = styled()
+			state.frameData[cast].fields.IsAnchoringRestricted = function()
+				return true
+			end
+			if mode == "other-plate" then
+				local _, otherUnit = state:plate("nameplate2")
+				state.frameData[cast].parent = otherUnit
+			elseif mode == "secret-parent" then
+				state.frameData[cast].parent = state:secretValue()
+			else
+				state.frameData[cast].parent = cast
+			end
+			H.falsy(addon:ReapplyStyleForNameplateFrame(base))
+			H.equal(#state.mutations, 0)
+		end
+	end)
 
 	H.test("font journal preserves native font-object association through disable", function()
 		local addon, state, env, base, unit = styled()

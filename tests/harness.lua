@@ -292,6 +292,9 @@ return function(root)
 			return #data(self).points
 		end
 		function frameMethods:GetPoint(index)
+			if data(self).errors.GetPoint then
+				error("position query blocked")
+			end
 			return env.unpack(data(self).points[index or 1] or { "CENTER", data(self).parent, "CENTER", 0, 0 })
 		end
 		function frameMethods:GetVertexColor()
@@ -336,11 +339,21 @@ return function(root)
 		function frameMethods:ClearAllPoints()
 			mutate(self, "ClearAllPoints")
 			data(self).points = {}
+			state:fireHook("ClearAllPoints", self)
 		end
 		function frameMethods:SetPoint(...)
 			mutate(self, "SetPoint", ...)
 			local points = data(self).points
-			points[#points + 1] = { ... }
+			local incoming = { ... }
+			local index = #points + 1
+			for i, point in ipairs(points) do
+				if point[1] == incoming[1] then
+					index = i
+					break
+				end
+			end
+			points[index] = incoming
+			state:fireHook("SetPoint", self, ...)
 		end
 		function frameMethods:SetHeight(value)
 			mutate(self, "SetHeight", value)
@@ -395,6 +408,8 @@ return function(root)
 			"SetText",
 			"SetFrameLevel",
 			"SetFrameStrata",
+			"SetToplevel",
+			"SetFlattensRenderLayers",
 			"SetParent",
 			"SetMaxLines",
 			"SetMinMaxValues",

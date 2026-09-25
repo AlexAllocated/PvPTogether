@@ -639,6 +639,13 @@ function PvPTogether:BuildDiagnostics()
 	Add("retainedLayouts", Count(self.nameplateStateByFrame))
 	Add("trackedPlates", Count(self.trackedNamePlateFrames))
 	Add("borderOverlays", Count(self.nameplateBorderTintByUnitFrame))
+	local failure = self.lastLayoutFailure
+	if failure then
+		Add("layoutFailure.step", failure.step)
+		Add("layoutFailure.property", failure.property)
+		Add("layoutFailure.stage", failure.stage)
+		Add("layoutFailure.reason", failure.reason)
+	end
 	Add("globalStyle", self:GetNameplateStyleLabel(self:GetCurrentGlobalNameplateStyle()))
 	for _, kind in ipairs({ "partyMember", "friendlyPlayer", "enemyPlayer" }) do
 		local style = self:GetOption(kind .. "Style")
