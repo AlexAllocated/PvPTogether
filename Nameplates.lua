@@ -239,7 +239,7 @@ local function ObserveAnchors(object)
 		return true
 	end
 	if not record then
-		record = { hooks = {} }
+		record = { hooks = {}, partialPoints = {} }
 		PvPTogether.nameplateAnchorRecords[object] = record
 		-- A newly acquired unanchored widget has an unambiguous empty baseline.
 		-- The count is not a screen coordinate; never read existing points here.
@@ -249,15 +249,14 @@ local function ObserveAnchors(object)
 		end
 	end
 	local function Clear()
-		record.points = PvPTogether:CanAccessNameplateFrame(object) and {} or nil
+		record.partialPoints = {}
+		record.points = PvPTogether:CanAccessNameplateFrame(object) and record.partialPoints or nil
 	end
 	local function Invalidate()
 		record.points = nil
+		record.partialPoints = {}
 	end
 	local function Point(_, point, relative, relativePoint, x, y)
-		if not record.points then
-			return
-		end
 		if
 			not PvPTogether:CanAccessNameplateFrame(object)
 			or not IsToken(point)
@@ -274,8 +273,9 @@ local function ObserveAnchors(object)
 			Invalidate()
 			return
 		end
-		local index = #record.points + 1
-		for i, existing in ipairs(record.points) do
+		local points = record.points or record.partialPoints
+		local index = #points + 1
+		for i, existing in ipairs(points) do
 			if existing[1] == point then
 				index = i
 				break
@@ -285,7 +285,18 @@ local function ObserveAnchors(object)
 			Invalidate()
 			return
 		end
-		record.points[index] = { point, relative, relativePoint, x, y }
+		points[index] = { point, relative, relativePoint, x, y }
+		-- Native aura rows replace their existing BOTTOM point without first
+		-- clearing it. Once every current anchor has been observed, the baseline
+		-- is complete. Counts are public metadata, never screen coordinates.
+		local ok, count = Call(object, "GetNumPoints")
+		count = ok and PvPTogether:SafeToNumber(count) or nil
+		if not count or count < #points or count > 16 or count % 1 ~= 0 then
+			Invalidate()
+			return
+		end
+		record.partialPoints = points
+		record.points = count == #points and points or nil
 	end
 	-- Observe only public setter arguments; never query positions on a restricted
 	-- plate or retain a secret argument. Unknown setters invalidate the baseline.

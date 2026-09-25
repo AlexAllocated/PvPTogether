@@ -289,7 +289,7 @@ return function(root)
 			return result(self, "GetJustifyH", data(self).justify or "LEFT")
 		end
 		function frameMethods:GetNumPoints()
-			return #data(self).points
+			return result(self, "GetNumPoints", #data(self).points)
 		end
 		function frameMethods:GetPoint(index)
 			if data(self).errors.GetPoint then

@@ -5,8 +5,9 @@
 - Fix style preflight on nameplates whose existing anchor positions cannot be queried. Observe public native anchor-setting calls before a plate's initial layout, retain validated data privately, and use it for reversible style changes. Secret or unobserved changes invalidate the record until a fresh native layout is observed.
 - Permit anchors between verified children of the same nameplate while rejecting cross-plate anchors and inaccessible, secret, or protected mutations. This also fixes border tints being rejected solely because their parent plate has anchoring restrictions.
 - Include the exact preflight property, stage, and static failure reason in `/pt diagnostics`.
+- Recognize complete native aura-row anchor updates even when Blizzard replaces an existing point without clearing it first. Incomplete or unreadable anchor counts still defer the entire layout.
 
-Validation: 151 offline regressions pass in both orders on Lua 5.1 and 5.2, including blocked position queries, early acquisition hooks, restoration, third-party changes, and invalidated anchor records. Live confirmation remains pending.
+Validation: 154 offline regressions pass in both orders on Lua 5.1 and 5.2, including blocked position queries, early acquisition hooks, restoration, third-party changes, and complete versus invalidated anchor records. The user confirmed border tint in Forever; live bar-style confirmation remains pending.
 
 ## 1.1.0 — 2026-09-24
 

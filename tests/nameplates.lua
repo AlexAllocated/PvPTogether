@@ -564,8 +564,12 @@ return function(H)
 		H.equal(cast:GetHeight(), 20)
 	end)
 
-	local function observedRestrictedPlate()
+	local function observedRestrictedPlate(auraWithoutClear)
 		local addon, state, env, base, unit, cast, health = styled()
+		local debuffs = unit.AurasFrame.DebuffListFrame
+		if auraWithoutClear then
+			state.frameData[debuffs].points = { { "BOTTOM", unit.name, "TOP", 0, 0 } }
+		end
 		for _, config in pairs(state.frameData) do
 			config.fields.IsAnchoringRestricted = function()
 				return true
@@ -579,8 +583,12 @@ return function(H)
 		state.frameData[base].fields.UnitFrame = unit
 		state:fireHook("AcquireUnitFrame", base)
 		for object in pairs(addon.nameplateAnchorRecords) do
-			object:ClearAllPoints()
-			object:SetPoint("CENTER", state.frameData[object].parent, "CENTER", 0, 0)
+			if auraWithoutClear and object == debuffs then
+				object:SetPoint("BOTTOM", unit.name, "TOP", 0, 0)
+			else
+				object:ClearAllPoints()
+				object:SetPoint("CENTER", state.frameData[object].parent, "CENTER", 0, 0)
+			end
 		end
 		state:clearMutations()
 		return addon, state, env, base, unit, cast, health
@@ -596,6 +604,62 @@ return function(H)
 		H.equal(state.frameData[unit.name].points[1][1], "CENTER")
 		H.equal(cast:GetHeight(), 20)
 		H.equal(state.foreignWrites, 0)
+	end)
+
+	H.test("native aura anchors updated without a clear permit the full bar style", function()
+		local addon, state, _, base, unit, cast = observedRestrictedPlate(true)
+		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(cast:GetHeight(), 16)
+		H.equal(state.frameData[unit.name].points[1][1], "LEFT")
+		H.truthy(addon:ResetAllNameplateStylesToBlizzard())
+		local point = state.frameData[unit.AurasFrame.DebuffListFrame].points[1]
+		H.equal(point[1], "BOTTOM")
+		H.equal(point[2], unit.name)
+		H.equal(state.foreignWrites, 0)
+	end)
+
+	H.test("partial anchor observations wait until all current points are known", function()
+		local addon, state, _, base, unit = observedRestrictedPlate()
+		local debuffs = unit.AurasFrame.DebuffListFrame
+		state.frameData[debuffs].points = {
+			{ "BOTTOM", unit.name, "TOP", 0, 0 },
+			{ "LEFT", unit, "LEFT", 0, 0 },
+		}
+		state:fireHook("SetAllPoints", debuffs, unit)
+		debuffs:SetPoint("BOTTOM", unit.name, "TOP", 0, 0)
+		state:clearMutations()
+		H.falsy(addon:ReapplyStyleForNameplateFrame(base))
+		H.equal(addon.lastLayoutFailure.step, 15)
+		H.equal(addon.lastLayoutFailure.reason, "anchor-baseline-pending")
+		H.equal(#state.mutations, 0)
+		debuffs:SetPoint("LEFT", unit, "LEFT", 0, 0)
+		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+	end)
+
+	H.test("unreadable or invalid anchor counts invalidate observations and recover on a native update", function()
+		for _, mode in ipairs({ "secret", "error", "fraction", "too-small", "too-large" }) do
+			local addon, state, _, base, unit = observedRestrictedPlate(true)
+			local debuffs = unit.AurasFrame.DebuffListFrame
+			local config = state.frameData[debuffs]
+			if mode == "error" then
+				config.errors.GetNumPoints = true
+			else
+				config.results.GetNumPoints = mode == "secret" and state:secretValue()
+					or mode == "fraction" and 1.5
+					or mode == "too-small" and 0
+					or 17
+			end
+			debuffs:SetPoint("BOTTOM", unit.name, "TOP", 0, 0)
+			state:clearMutations()
+			H.falsy(addon:ReapplyStyleForNameplateFrame(base))
+			H.equal(addon.lastLayoutFailure.reason, "anchor-baseline-pending")
+			H.equal(#state.mutations, 0)
+			config.errors.GetNumPoints = nil
+			config.results.GetNumPoints = nil
+			debuffs:SetPoint("BOTTOM", unit.name, "TOP", 0, 0)
+			H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+			H.equal(state.foreignWrites, 0)
+		end
 	end)
 
 	H.test("observed restricted anchors preserve newer third-party changes on teardown", function()
