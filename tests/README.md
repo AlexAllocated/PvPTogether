@@ -1,7 +1,5 @@
 # Offline regressions
 
-The historical style-reset probe is preserved at commit `86aea5d`; see [STYLE_OVERRIDE_REVIEW.md](../STYLE_OVERRIDE_REVIEW.md) for reproduction instructions. It applies to the retired implementation, not the current addon.
-
 Run from the repository root with a standalone Lua interpreter:
 
 ```sh
@@ -13,6 +11,6 @@ The runner also accepts an absolute repository path as its first argument. Each 
 
 Foreign-frame proxies reject addon field writes and native widget mutations; the only permitted native mutation is creating an addon-owned texture. Forbidden and inaccessible fixtures reject unsafe member reads. Private texture methods track their arguments; deterministic timer callbacks allow already-queued work to run after cancellation so generation guards are exercised. Tests cover normalization, failed access checks, protected and unprotected restricted regions, unknown unit identity, pooling, border cleanup, picker generations, options capability gates, the Blizzard Settings shortcut, and bounded diagnostics. Native geometry remains unchanged across refreshes and disable/re-enable, including when native dimensions cannot be read. No native layout hooks or CVar writes are installed.
 
-These fixtures do not implement the WoW taint engine. A sentinel can reveal an unchecked secret flowing into operations, but it cannot reproduce every native secret-value behavior. Passing tests establish offline regression behavior only. Actual Retail/Forever appearance, combat actions, engine restrictions, and coexistence with other addons require live validation documented in the audit.
+These fixtures do not implement the WoW taint engine. A sentinel can reveal an unchecked secret flowing into operations, but it cannot reproduce every native secret-value behavior. Passing tests establish offline regression behavior only. Actual Retail/Forever appearance, combat actions, engine restrictions, and coexistence with other addons require separate live validation.
 
 Integration coverage includes independent library namespaces, shared diagnostic headers and bounded reason sampling, copy-window creation/reuse, restriction and native-permission gates, chat fallback after UI construction failure, and suppression of raw foreign error payloads. Changes to embedded library files require upstream review and immutable re-vendoring; verify them with the upstream `scripts/vendor.py --check`.

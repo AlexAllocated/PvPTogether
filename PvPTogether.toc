@@ -7,7 +7,7 @@
 ## Interface-Camelot: 16001
 ## Title: PvPTogether
 ## IconTexture: Interface\Icons\Ability_DualWield
-## Version: 1.2.2
+## Version: 1.2.3
 ## Notes: Custom party, friendly, and enemy player nameplate borders.
 ## SavedVariablesPerCharacter: PvPTogetherDBChar
 ## Author: Chev

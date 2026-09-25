@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.3 — 2026-09-25
+
+Repository housekeeping: keep local development notes outside the tracked source and release packages. Gameplay behavior is unchanged.
+
 ## 1.2.2 — 2026-09-24
 
 Announce the installed version, supported clients and settings command once per login or UI reload. Include addon-specific CurseForge and GitHub feedback links; clicking a link opens a native-style copy window. Share message behavior and safe copy UI through private libchev 1.2.0. If link registration or the copy window is unavailable, show the full URL in chat. An unavailable welcome helper cannot interrupt normal addon startup.
