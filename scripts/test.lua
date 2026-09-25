@@ -4,7 +4,7 @@
 -- runtime test patches a real Blizzard global, frame, mixin, or saved variable.
 local root = arg[1] or "."
 local harness = assert(loadfile(root .. "/tests/harness.lua"))()(root)
-for _, suite in ipairs({ "core", "nameplates", "integration" }) do
+for _, suite in ipairs({ "core", "nameplates", "integration", "clients" }) do
 	assert(loadfile(root .. "/tests/" .. suite .. ".lua"))()(harness)
 end
 

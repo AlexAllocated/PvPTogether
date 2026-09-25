@@ -1,0 +1,28 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lua: ['5.1', '5.2']
+    defaults:
+      run:
+        working-directory: addon
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: addon
+      - uses: actions/checkout@v4
+        with:
+          repository: AlexAllocated/libchev
+          ref: 445c0cf5b3dd40d36461f6e0b9adc2feb8dfb16b
+          path: library
+      - run: sudo apt-get update && sudo apt-get install -y lua${{ matrix.lua }}
+      - run: lua${{ matrix.lua }} scripts/test.lua
+      - run: lua${{ matrix.lua }} scripts/test.lua . reverse
+      - run: python3 ../library/scripts/vendor.py . --check
+      - run: find . -name '*.lua' -exec luac${{ matrix.lua }} -p {} \;
+      - run: bash -n scripts/bump_version.sh && git diff --check

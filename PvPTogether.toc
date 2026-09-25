@@ -1,8 +1,12 @@
-## Interface: 120100, 16001
+## Interface: 120100, 16001, 11509, 20506, 50504, 38001, 38002
+## Interface-Vanilla: 11509
+## Interface-TBC: 20506
+## Interface-Mists: 50504
+## Interface-Titan: 38001, 38002
 ## Interface-Mainline: 120100
 ## Interface-Camelot: 16001
 ## Title: PvPTogether
-## Version: 1.1.1
+## Version: 1.2.0
 ## Notes: Custom party, friendly, and enemy player nameplate borders.
 ## SavedVariablesPerCharacter: PvPTogetherDBChar
 ## Author: Chev
