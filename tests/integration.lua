@@ -67,7 +67,7 @@ return function(H)
 		local addon, state = H.new()
 		local base = state:plate("nameplate1")
 		addon.isEnabled, addon.db.enemyPlayerStyle = true, 2
-		H.truthy(addon:ReapplyStyleForNameplateFrame(base))
+		H.truthy(addon:RefreshNameplateFrame(base))
 		addon:RecordDiagnostic("existing-reason")
 		local db, store, log = addon.db, addon.diagnosticCounterStore, addon.diagnosticLog
 		local counters, layouts = addon:GetDiagnosticSnapshot(), addon.nameplateStateByFrame
@@ -137,7 +137,7 @@ return function(H)
 		local report = window.TextBox:GetText()
 		H.truthy(window:IsShown())
 		H.truthy(report:find("addon=PvPTogether", 1, true))
-		H.truthy(report:find("library=libchev 1.1.2", 1, true))
+		H.truthy(report:find("library=libchev 1.1.3", 1, true))
 		H.truthy(report:find("suite=PvPTogether in-game tests", 1, true))
 		H.truthy(
 			report:find("Addon-owned isolated checks; live-client behavior requires separate validation.", 1, true)

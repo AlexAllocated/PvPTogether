@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.1 — 2026-09-24
+
+Keep overlapping debug consoles and their controls in one native stacking group through private libchev 1.1.3. Category menus stay with their owning console.
+
+- Retire per-category style overrides and previews. Blizzard's global nameplate settings now own all native layout and style behavior.
+- Keep party, friendly-player, and enemy-player border toggles and colors. Add a **Blizzard Nameplate Settings** button to `/pt`.
+- Remove native geometry mutations, snapshot observers, restoration journals, and style reapplication hooks. Borders use only addon-owned textures and retain guarded identity, recycling, cleanup, and deferred refresh behavior.
+- Preserve old saved style preferences as ignored data; no saved files are rewritten externally. `/reload` clears the previous runtime's geometry overrides.
+- Report native layout ownership and border refresh/cleanup status in `/pt diagnostics`.
+
+Validation: 111 offline regressions pass in both orders on Lua 5.1 and 5.2. Native frame fixtures reject all widget mutations except creating addon-owned textures. Coverage includes unreadable native geometry, native layout changes, restrictions, pooled frames, stale callbacks, disable/re-enable, and the Settings shortcut. Updated UI and gameplay behavior still require live Retail/Forever validation.
+
 ## 1.1.0 — 2026-09-24
 
 Use the same private libchev 1.1.2 debug console across all three addons, including category/search filters, copy controls, test results, diagnostic reports, timestamps when available, and a single final test summary. Fix stretched native frame artwork with explicit texture bounds.

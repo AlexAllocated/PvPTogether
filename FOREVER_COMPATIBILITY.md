@@ -1,10 +1,14 @@
 # Retail and Forever compatibility evidence
 
+**Current scope:** per-category native styles have been retired with user approval; see [STYLE_OVERRIDE_REVIEW.md](STYLE_OVERRIDE_REVIEW.md). PT now adds category border textures and links to Blizzard’s global nameplate settings. Native geometry, including all client-specific layout differences below, remains Blizzard-owned. Historical geometry findings below describe why the previous adapter was limited.
+
 Reviewed September 24, 2026. Installed build metadata still reports Retail **12.1.0.69933** and Forever beta **1.60.1.69977**. The comparison below uses the actual `BlizzardInterfaceCode/Interface` exports in those installations. It is a source audit, not a successful login, screenshot comparison, combat test, or taint certification. The original PvPTogether implementation inspected was commit `ec3d4df077ad465c7260de1f3d95252382c9684b`.
 
-**Verdict:** the addon’s purpose is viable on Forever, but it needs the modern nameplate implementation and modern restriction checks. Treating interface `16001` as old Classic would select the wrong API and security behavior. A TOC change alone cannot provide compatibility. Keep the same capability-driven implementation for both clients, with explicit handling of Forever’s different layout and a safe fallback wherever a region or classification is unavailable.
+**Verdict:** the addon’s purpose is viable on Forever, but it needs the modern nameplate implementation and modern restriction checks. Treating interface `16001` as old Classic would select the wrong API and security behavior. A TOC change alone cannot provide compatibility. Keep the same capability-driven implementation for both clients, with native handling of Forever’s different layout and a safe fallback wherever a region or classification is unavailable.
 
 ## What the clients actually provide
+
+Native style options differ from the shared enum. The installed Forever export’s `Blizzard_SettingsDefinitions_Frame/Camelot/NameplatesOverrides.lua` offers Thin (Default), Modern (Large), Block, and CastFocus. PT no longer maintains its own style dropdown or reads these providers; its Settings button opens the native category, where the client supplies the correct choices.
 
 | Area | Verified behavior and consequence |
 | --- | --- |
@@ -29,10 +33,10 @@ Other seemingly visual helpers also write Lua state: Retail `NamePlateCastingBar
 The appropriate implementation boundary is:
 
 1. Resolve accessible unit classification separately from rendering. Keep frame/token/GUID associations, applied state, overlay handles, and deferred generations exclusively in addon-owned tables. Never cache secrets. An unknown current identity must not inherit a recycled unit’s classification.
-2. Build private geometry from validated scalar configuration and the loaded client constants. Do not mutate or replace global option tables, mixins, cached Blizzard fields, or C API tables. Do not invoke Blizzard setup helpers with addon payloads.
-3. Apply only guarded primitive visual operations on accessible regions. Avoid native nameplate-root sizing and hit-test changes. Both clients document a special combat/tick rule for hit-test mutations (`FrameAPINamePlateDocumentation.lua:10–27`, `60–68`); these are not ordinary texture changes.
-4. Preserve Blizzard’s global behavior where a per-type difference would require writing its state. Classic is especially sensitive because cast behavior and selection behavior differ in addition to geometry. Any deliberately unsupported style or presentation detail must be visible in the options/help rather than silently pretending to match the full Blizzard preset.
-5. Guard teardown with the same checks as setup. Retain handles for pending cleanup, invalidate old callback generations across disable/re-enable, and retry deferred work through state-change events after restrictions end. Do not restore a stale snapshot over a newer Blizzard layout or another addon’s current changes.
+2. Leave native geometry and style selection to Blizzard. Do not mutate or replace global option tables, mixins, cached Blizzard fields, or C API tables. Do not invoke Blizzard setup helpers with addon payloads.
+3. Attach addon-owned border textures to accessible health bars and apply guarded visual operations only to those textures. Avoid native nameplate-root sizing and hit-test changes. Both clients document a special combat/tick rule for hit-test mutations (`FrameAPINamePlateDocumentation.lua:10–27`, `60–68`); these are not ordinary texture changes.
+4. Preserve Blizzard’s global style behavior in all categories. No per-category style override or native layout hook remains.
+5. Guard teardown with the same checks as setup. Retain handles for pending cleanup, invalidate old callback generations across disable/re-enable, and retry deferred work through state-change events after restrictions end. Cleanup hides only owned textures; it never restores a native layout snapshot.
 6. Use addon-owned wrappers and private fixtures for regressions. Live tests must never replace `issecretvalue`, `C_*`, `hooksecurefunc`, Blizzard mixins, or other shared client objects.
 
 These choices reduce known shared-state coupling. Offline tests cannot establish whether the engine considers a particular live frame mutation safe, and a clean login alone does not establish clean combat behavior.
@@ -47,12 +51,12 @@ The installed generated API documentation is the primary evidence for Forever’
 
 ## Required live validation
 
-- Start each client with only PvPTogether and error-capture tools. Check all supported styles on NPCs, friendly players, hostile players, and party members at small/default/large nameplate sizes. Compare name, health text, cast icon/text, interrupt shield, auras, and selection borders.
+- Start each client with only PvPTogether and error-capture tools. Open `/pt`, verify its native Settings shortcut, and check borders with each client-provided global style on NPCs, friendly players, hostile players, and party members at small/default/large nameplate sizes. Compare name, health text, cast icon/text, interrupt shield, auras, and selection borders.
 - In Forever, inspect level badges and skulls, centered names, name-only friendlies, crowd-control icons, and widgets-only units. Validate both level-bearing and level-hidden states. Retest after beta updates because these layouts differ from Retail.
-- Change category styles and border colors during combat; finish combat and verify the latest requested setting applies without blocked actions. Disable and re-enable during combat and while delayed work is pending. Removal/reuse must not leave a previous unit’s tint or style on a new unit.
+- Change category border colors and toggles during combat; finish combat and verify the latest requested setting applies without blocked actions. Disable and re-enable during combat and while delayed work is pending. Removal/reuse must not leave a previous unit’s tint on a new unit.
 - Enter/leave battlegrounds and instances; test Retail arenas. Include friendly restricted nameplates. Verify skipped restricted frames keep their native display and that cleanup resumes when access returns.
 - Change Blizzard’s global style/size while the addon is enabled, including Classic if the client offers it; disable the addon and verify current native presentation is preserved. Check rapid targeting, faction changes, group membership changes, and loading screens.
-- Repeat with the user’s ordinary addon set. Capture the client build, PvPTogether diagnostics, first error/blocked-action stack, selected unit category/style, and action immediately preceding a failure. Reload and full-restart settings persistence are separate checks.
+- Repeat with the user’s ordinary addon set. Capture the client build, PvPTogether diagnostics, first error/blocked-action stack, selected unit category and global style, and action immediately preceding a failure. Reload and full-restart settings persistence are separate checks.
 
 No existing saves or client configuration files were changed by this research. No release was published.
 

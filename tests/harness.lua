@@ -36,6 +36,7 @@ return function(root)
 			frameData = {},
 			mutations = {},
 			foreignWrites = 0,
+			nativeMutationAttempts = 0,
 			secret = {},
 			inaccessible = {},
 			inaccessibleTables = {},
@@ -205,6 +206,10 @@ return function(root)
 		end
 		local function mutate(frame, method, ...)
 			local config = data(frame)
+			if config.foreign and method ~= "CreateTexture" then
+				state.nativeMutationAttempts = state.nativeMutationAttempts + 1
+				error("attempted native widget mutation: " .. method)
+			end
 			assert(not config.forbidden, "attempted " .. method .. " on a forbidden frame")
 			assert(
 				not state.inaccessible[frame] and not state.inaccessibleTables[frame],
@@ -237,7 +242,10 @@ return function(root)
 		function frameMethods:GetWidth()
 			return result(self, "GetWidth", data(self).width or 200)
 		end
-		function frameMethods:GetHeight()
+		function frameMethods:GetHeight(ignoreRect)
+			if not ignoreRect and data(self).errors.GetHeightRect then
+				error("fixture rectangle unavailable")
+			end
 			return result(self, "GetHeight", data(self).height or 20)
 		end
 		function frameMethods:GetSize()
@@ -289,9 +297,12 @@ return function(root)
 			return result(self, "GetJustifyH", data(self).justify or "LEFT")
 		end
 		function frameMethods:GetNumPoints()
-			return #data(self).points
+			return result(self, "GetNumPoints", #data(self).points)
 		end
 		function frameMethods:GetPoint(index)
+			if data(self).errors.GetPoint then
+				error("position query blocked")
+			end
 			return env.unpack(data(self).points[index or 1] or { "CENTER", data(self).parent, "CENTER", 0, 0 })
 		end
 		function frameMethods:GetVertexColor()
@@ -336,15 +347,26 @@ return function(root)
 		function frameMethods:ClearAllPoints()
 			mutate(self, "ClearAllPoints")
 			data(self).points = {}
+			state:fireHook("ClearAllPoints", self)
 		end
 		function frameMethods:SetPoint(...)
 			mutate(self, "SetPoint", ...)
 			local points = data(self).points
-			points[#points + 1] = { ... }
+			local incoming = { ... }
+			local index = #points + 1
+			for i, point in ipairs(points) do
+				if point[1] == incoming[1] then
+					index = i
+					break
+				end
+			end
+			points[index] = incoming
+			state:fireHook("SetPoint", self, ...)
 		end
 		function frameMethods:SetHeight(value)
 			mutate(self, "SetHeight", value)
 			data(self).height = value
+			state:fireHook("SetHeight", self, value)
 		end
 		function frameMethods:SetWidth(value)
 			mutate(self, "SetWidth", value)
@@ -353,6 +375,7 @@ return function(root)
 		function frameMethods:SetSize(width, height)
 			mutate(self, "SetSize", width, height)
 			data(self).width, data(self).height = width, height
+			state:fireHook("SetSize", self, width, height)
 		end
 		function frameMethods:SetFont(...)
 			mutate(self, "SetFont", ...)
@@ -395,6 +418,8 @@ return function(root)
 			"SetText",
 			"SetFrameLevel",
 			"SetFrameStrata",
+			"SetToplevel",
+			"SetFlattensRenderLayers",
 			"SetParent",
 			"SetMaxLines",
 			"SetMinMaxValues",
@@ -541,6 +566,15 @@ return function(root)
 			{ OnUnitSet = function() end, OnUnitCleared = function() end, UpdateAnchors = function() end }
 		env.NamePlateDriverMixin = { UpdateNamePlateOptions = function() end }
 		env.DropdownButtonMixin = {}
+		env.NameplatesOverrides = {
+			GetNameplateStyleOptions = function()
+				local options = {}
+				for index, label in ipairs({ "Modern", "Thin", "Block", "Health Focus", "Cast Focus", "Legacy" }) do
+					options[index] = { value = index - 1, label = label }
+				end
+				return options
+			end,
+		}
 		env.Settings = {
 			RegisterCanvasLayoutCategory = function()
 				return {
@@ -754,6 +788,10 @@ return function(root)
 			}) do
 				child(unit, name)
 			end
+			data(auras.DebuffListFrame).points = {
+				{ "LEFT", health, "LEFT", 0, 0 },
+				{ "BOTTOM", unit.name, "TOP", 0, 0 },
+			}
 			self.plates[token], self.visible[#self.visible + 1] = base, base
 			self.units[token] = attributes or { guid = "Player-1-" .. token, isPlayer = true, isFriend = false }
 			return base, unit, cast, bar
