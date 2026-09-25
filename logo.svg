@@ -2,6 +2,7 @@
   <title id="title">PvPTogether</title>
   <desc id="description">Flat-color project logo. Editable vector emblem with outlined lettering.</desc>
 
+  <rect id="background" width="1254" height="1254" fill="#F5F2E9"/>
   <g id="pvp-shield">
     <path id="shield-outline" fill="#222B30" d="M627 163 C729 224 842 250 941 267 V406 C941 648 837 788 627 886 C417 788 313 648 313 406 V267 C412 250 525 224 627 163 Z"/>
     <path id="blue-half" fill="#4185B1" d="M627 207 V843 C443 751 351 624 351 406 V299 C451 283 544 253 627 207 Z"/>
