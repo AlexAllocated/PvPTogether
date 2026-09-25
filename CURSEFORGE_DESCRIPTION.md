@@ -10,7 +10,7 @@ Open **Options → AddOns → PvPTogether** or use `/pt`. Each category has a bo
 - `/pt test` runs fifteen checks on detached private values and opens current results in the same debug console, with chat fallback when the window is unavailable. It does not exercise live nameplates or certify taint safety.
 - `/pvptogether` is an alias for `/pt`.
 
-The same capability-driven implementation targets Retail and Forever. Borders use addon-owned textures attached to accessible native health bars. Protected or inaccessible regions wait until the client permits updates; cleanup retries when restrictions end.
+The same capability-driven implementation targets Retail, Forever, Era/Hardcore/SoD, Anniversary/TBC, Mists Classic and Titan Reforged. Borders use addon-owned textures attached to accessible native health bars. Protected or inaccessible regions wait until the client permits updates; cleanup retries when restrictions end.
 
 Per-category style overrides have been retired. Old saved style preferences are preserved but ignored. Reload the UI after updating to let Blizzard rebuild its native layout.
 

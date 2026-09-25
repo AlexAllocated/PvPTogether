@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0 — 2026-09-24
+
+Declare current Classic client support and add six-client checks for category borders, native settings and cleanup. Keep Blizzard in control of native styles; all clients use the same guarded border implementation.
+
+Validation: 117 tests pass in both orders on Lua 5.1 and 5.2, with six client profiles, Lua parsing and exact private-library vendor checks. NoPoizen client smoke checks and package verification also pass. Live validation of the new adapters remains pending.
+
+See [CLIENT_COMPATIBILITY.md](CLIENT_COMPATIBILITY.md) for source evidence, scope and validation limits.
+
 ## 1.1.1 — 2026-09-24
 
 Keep overlapping debug consoles and their controls in one native stacking group through private libchev 1.1.3. Category menus stay with their owning console.
