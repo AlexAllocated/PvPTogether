@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1 — 2026-09-24
+
+Show Blizzard's crossed-swords icon beside PvPTogether in the AddOns list instead of the default question mark.
+
 ## 1.2.0 — 2026-09-24
 
 Declare current Classic client support and add six-client checks for category borders, native settings and cleanup. Keep Blizzard in control of native styles; all clients use the same guarded border implementation.
