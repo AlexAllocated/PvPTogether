@@ -1,5 +1,7 @@
 # Offline regressions
 
+`lua scripts/review_style_lifecycle.lua .` separately characterizes the style-reset issues reviewed at revision `73e0def`; see `STYLE_OVERRIDE_REVIEW.md`. It intentionally demonstrates the existing failures using private fixtures. Its observations are audit evidence, not the desired behavior or an additional passing product regression suite.
+
 Run from the repository root with a standalone Lua interpreter:
 
 ```sh
