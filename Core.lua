@@ -645,5 +645,6 @@ eventFrame:SetScript("OnEvent", function(_, eventName, ...)
 		if PvPTogether:GetOption("enabled") then
 			PvPTogether:Enable()
 		end
+		PvPTogether:PrintWelcomeMessage()
 	end
 end)

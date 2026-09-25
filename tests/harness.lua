@@ -817,6 +817,7 @@ return function(root)
 		state:load("Libs/libchev/ReportWindow.lua")
 		state:load("Libs/libchev/SelfTests.lua")
 		state:load("Core.lua")
+		state:load("Welcome.lua")
 		state:load("InGameTests.lua")
 		if not options.coreOnly then
 			state:load("Nameplates.lua")
