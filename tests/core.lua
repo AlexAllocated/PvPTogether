@@ -1,4 +1,38 @@
 return function(H)
+	H.test("welcome login announces once routes feedback and tolerates unavailable helpers", function()
+		local handler
+		local addon, state = H.new({
+			coreOnly = true,
+			configure = function(env)
+				env.LinkUtil = {
+					IsLinkHandlerRegistered = function()
+						return false
+					end,
+					RegisterLinkHandler = function(kind, callback)
+						H.equal(kind, "pvptogetherfeedback")
+						handler = callback
+					end,
+				}
+			end,
+		})
+		state:emit("PLAYER_LOGIN")
+		state:emit("PLAYER_LOGIN")
+		H.truthy(addon.hasLoggedIn)
+		H.truthy(addon.isEnabled)
+		H.equal(#state.messages, 1)
+		H.truthy(state.messages[1][1]:find("v1.0.7 loaded!", 1, true))
+		H.truthy(state.messages[1][1]:find("Type /pt for settings.", 1, true))
+		handler("pvptogetherfeedback:curseforge")
+		H.truthy(state.messages[2][1]:find("https://www.curseforge.com/wow/addons/pvptogether", 1, true))
+		handler("pvptogetherfeedback:github")
+		H.truthy(state.messages[3][1]:find("https://github.com/AlexAllocated/PvPTogether", 1, true))
+		-- This library belongs to the offline environment, never a live addon.
+		addon.LibChev.NewWelcomeController = nil
+		state:emit("PLAYER_LOGIN")
+		H.truthy(addon.isEnabled)
+		H.equal(#state.messages, 3)
+	end)
+
 	H.test("legacy style preferences are preserved but no longer accepted as active settings", function()
 		local addon, state = H.new({
 			coreOnly = true,
